@@ -87,11 +87,12 @@ function ShelfRow.new(opts)
                 on_hold = opts.on_book_hold,
             }
         else
-            -- Empty slot — blank spacer so layout is stable.
-            row[#row + 1] = FrameContainer:new{
-                bordersize = 0,
-                width      = slot_w,
-                height     = slot_h,
+            -- Empty slot — a bare Widget with a sized dimen. FrameContainer
+            -- crashes on getSize() when its self[1] child is nil, so we use
+            -- the lighter-weight Widget directly. Widget:getSize() returns
+            -- self.dimen, which gives the row a stable slot footprint.
+            row[#row + 1] = Widget:new{
+                dimen = Geom:new{ w = slot_w, h = slot_h },
             }
         end
     end
