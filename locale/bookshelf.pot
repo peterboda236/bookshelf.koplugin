@@ -1,0 +1,102 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the bookshelf package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: bookshelf 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-05-03 14:24+0100\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: bookshelf_widget.lua:130
+msgid ""
+"Nothing in Series yet · Add series metadata to your books and they will "
+"appear here"
+msgstr ""
+
+#: bookshelf_widget.lua:132
+msgid "No favourites yet · Long-press a book and tap 'Add to favourites'"
+msgstr ""
+
+#: bookshelf_widget.lua:134
+msgid "No books found · Set your library folder in Settings then tap Latest"
+msgstr ""
+
+#: bookshelf_widget.lua:136
+#, lua-format
+msgid "No books in %s yet"
+msgstr ""
+
+#: main.lua:98 main.lua:102 _meta.lua:4
+msgid "Bookshelf"
+msgstr ""
+
+#: main.lua:121
+msgid "Open Bookshelf"
+msgstr ""
+
+#: _meta.lua:5
+msgid ""
+"A skeumorphic home screen for KOReader: hero card for the currently-reading "
+"book, plus chip-driven shelves for Recent / Latest / Series / Favourites."
+msgstr ""
+
+#: settings.lua:56
+#, lua-format
+msgid "Hero card line %d"
+msgstr ""
+
+#: settings.lua:61
+msgid "Cancel"
+msgstr ""
+
+#: settings.lua:68
+msgid "Save"
+msgstr ""
+
+#: settings.lua:100 settings.lua:149
+msgid "Hero card font scale"
+msgstr ""
+
+#: settings.lua:114
+msgid "\"Latest\" folder walk depth"
+msgstr ""
+
+#: settings.lua:115
+msgid ""
+"How deep to scan your library folder for newly-added books. Higher values "
+"take longer on a cold start."
+msgstr ""
+
+#: settings.lua:145
+msgid "Edit hero card lines"
+msgstr ""
+
+#: settings.lua:153
+msgid "Show book progress bar"
+msgstr ""
+
+#: settings.lua:162
+msgid "\"Latest\" walk depth"
+msgstr ""
+
+#: settings.lua:166
+msgid "Show clock and battery in titlebar"
+msgstr ""
+
+#: settings.lua:175
+msgid "About"
+msgstr ""
+
+#: settings.lua:181
+msgid "Bookshelf settings"
+msgstr ""
