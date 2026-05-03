@@ -20,7 +20,7 @@ local Settings = {}
 
 local function readLines()
     return G_reader_settings:readSetting("bookshelf_hero_lines") or {
-        "%page_num / %page_count · %book_pct%%",
+        "Page %page_num / %page_count · %book_pct",
         "[if:book_time_left]%book_time_left LEFT[else]Open to start reading[/if]",
     }
 end

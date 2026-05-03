@@ -50,7 +50,7 @@ The hero card detail strip is driven by token format strings — the same syntax
 Default lines:
 
 ```
-%page_num / %page_count · %book_pct%
+Page %page_num / %page_count · %book_pct
 [if:book_time_left]%book_time_left LEFT[else]Open to start reading[/if]
 ```
 
