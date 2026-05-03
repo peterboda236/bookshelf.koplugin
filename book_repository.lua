@@ -123,11 +123,15 @@ local SUPPORTED_EXT = {
     cbz=true, cbr=true, txt=true, md=true, html=true, htm=true, djvu=true,
 }
 
+-- KOReader ships LFS as `libs/libkoreader-lfs` and that's the only path that
+-- works inside the plugin loader. The unprefixed `require("lfs")` resolves
+-- only in the test harness (where we stub package.loaded.lfs) and fails at
+-- runtime — which is what crashed the chip switch on first use.
 local function walkBooks(root, depth, out, current_depth)
     current_depth = current_depth or 0
     if current_depth > depth then return end
-    local lfs = require("lfs")
-    if not lfs.dir then return end
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok_lfs or not lfs or not lfs.dir then return end
 
     -- Guard against permission errors / missing dirs raised by lfs.dir(root).
     local ok, iter = pcall(lfs.dir, root)

@@ -19,7 +19,7 @@ package.loaded["docsettings"] = {
         end })
     end,
 }
-package.loaded["lfs"] = {
+package.loaded["libs/libkoreader-lfs"] = {
     attributes = function(fp, key)
         if key == "modification" then
             return _G._test_mtime and _G._test_mtime[fp] or 0
@@ -113,7 +113,7 @@ end)
 
 test("getLatest: orders by mtime desc, respects limit and depth", function()
     -- Stub a tiny directory walk via the lfs mock above.
-    package.loaded["lfs"].dir = function(path)
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
         local files
         if path == "/home" then files = { ".", "..", "old.epub", "new.epub", "sub" }
         elseif path == "/home/sub" then files = { ".", "..", "deep.epub" }
@@ -121,7 +121,7 @@ test("getLatest: orders by mtime desc, respects limit and depth", function()
         local i = 0
         return function() i = i + 1; return files[i] end
     end
-    package.loaded["lfs"].attributes = function(fp, key)
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
         local times = { ["/home/old.epub"] = 100, ["/home/new.epub"] = 500, ["/home/sub/deep.epub"] = 300 }
         local modes = { ["/home/sub"] = "directory" }
         if key == "modification" then return times[fp] or 0
@@ -244,7 +244,7 @@ end)
 
 test("getLatest: unreadable directory does not crash the walk", function()
     -- Stub lfs.dir so it raises on '/home/badperms' but works on '/home'.
-    package.loaded["lfs"].dir = function(path)
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
         if path == "/home/badperms" then
             error("permission denied: " .. path)
         end
@@ -254,7 +254,7 @@ test("getLatest: unreadable directory does not crash the walk", function()
         local i = 0
         return function() i = i + 1; return files[i] end
     end
-    package.loaded["lfs"].attributes = function(fp, key)
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
         local times = { ["/home/ok.epub"] = 100 }
         local modes = { ["/home/badperms"] = "directory" }
         if key == "modification" then return times[fp] or 0
