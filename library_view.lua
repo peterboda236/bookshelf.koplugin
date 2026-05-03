@@ -14,8 +14,10 @@ local InputContainer  = require("ui/widget/container/inputcontainer")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
+local VerticalSpan    = require("ui/widget/verticalspan")
 local TextWidget      = require("ui/widget/textwidget")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local TitleBar        = require("ui/widget/titlebar")
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local Size            = require("ui/size")
@@ -80,6 +82,9 @@ end
 -- Called on chip switch and on page turn.
 
 function LibraryView:_rebuild()
+    -- Release any widget tree from the previous rebuild before replacing it.
+    if self[1] and self[1].free then self[1]:free() end
+
     local items_all    = self:_fetchAll()
     local total_pages  = math.max(1, math.ceil(#items_all / PER_PAGE))
     -- Clamp page in case the new chip yields fewer pages.
@@ -87,6 +92,19 @@ function LibraryView:_rebuild()
     -- Save for event handlers.
     self._total_pages  = total_pages
     self._items_all    = items_all
+
+    -- ── Title bar ─────────────────────────────────────────────────────────────
+    local titlebar = TitleBar:new{
+        title                = "Bookshelf · Library",
+        width                = self.width,
+        align                = "left",
+        fullscreen           = false,
+        with_bottom_line     = true,
+        left_icon            = "appbar.chevron.left",
+        left_icon_tap_callback = function() self:onClose() end,
+        show_parent          = self,
+    }
+    local titlebar_h = titlebar:getHeight()
 
     -- ── Chip strip ────────────────────────────────────────────────────────────
     local chips = ChipStrip:new{
@@ -103,9 +121,9 @@ function LibraryView:_rebuild()
     }
 
     -- ── Shelf rows ────────────────────────────────────────────────────────────
-    -- Remaining vertical space after chip strip and page label.
+    -- Remaining vertical space after title bar, chip strip, and page label.
     local reserved_h  = CHIP_H + LABEL_H + Size.padding.default * 2
-    local shelves_h   = self.height - reserved_h
+    local shelves_h   = self.height - titlebar_h - reserved_h
     -- Each shelf row gets an equal share, minus a small inter-row gap.
     local row_h = math.floor((shelves_h - Size.padding.small * (ROWS - 1)) / ROWS)
 
@@ -121,7 +139,7 @@ function LibraryView:_rebuild()
 
         if r > 0 then
             -- Small vertical gap between shelf rows.
-            shelf_vg[#shelf_vg + 1] = require("ui/widget/verticalspan"):new{
+            shelf_vg[#shelf_vg + 1] = VerticalSpan:new{
                 width = self.width, height = Size.padding.small
             }
         end
@@ -142,7 +160,7 @@ function LibraryView:_rebuild()
     -- the Swipe handler (swipe is the primary pagination surface). The label is
     -- informational; the ‹/› glyphs are visual affordances only in v0.1.
     local page_text = string.format(
-        "Page %d / %d    ‹  ›",
+        "Page %d / %d  ‹  ›",
         self.page, total_pages
     )
     local label = CenterContainer:new{
@@ -161,6 +179,7 @@ function LibraryView:_rebuild()
         padding   = Size.padding.default,
         VerticalGroup:new{
             align = "left",
+            titlebar,
             chips,
             shelf_vg,
             label,
