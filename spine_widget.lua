@@ -32,8 +32,10 @@ function SpineWidget:init()
 end
 
 function SpineWidget:_renderCover()
+    local Screen = require("device").screen
     return FrameContainer:new{
-        bordersize = Size.border.thin,
+        bordersize = Screen:scaleBySize(2),     -- 2dp border per spec
+        radius     = Screen:scaleBySize(4),     -- slight rounding
         padding    = 0,
         ImageWidget:new{
             image  = self.book.cover_bb,
@@ -88,17 +90,24 @@ function SpineWidget:_renderFallback()
 
     -- Faint grey card so the "no cover" fallback reads as a tile against the
     -- white page. Blitbuffer.gray semantics: 0 = white, 1 = black.
-    local paper = Blitbuffer.gray(0.07)
-
+    local paper  = Blitbuffer.gray(0.07)
+    local Screen = require("device").screen
+    local border = Screen:scaleBySize(2)
+    -- Match the cover render path: 2dp border, slight rounding, EXACTLY
+    -- the same self.width × self.height footprint. Inner CenterContainer
+    -- subtracts the border so the FrameContainer's outer size stays at
+    -- self.width × self.height (otherwise the fallback overflows the
+    -- shelf base rule by ~4dp on each side).
     return FrameContainer:new{
-        bordersize    = Size.border.thin,
-        padding_top    = pad * 2,
-        padding_bottom = pad * 2,
-        padding_left  = pad,
-        padding_right = pad,
+        bordersize = border,
+        radius     = Screen:scaleBySize(4),
+        padding    = 0,
         background = paper,
         CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = self.height },
+            dimen = Geom:new{
+                w = self.width  - border * 2,
+                h = self.height - border * 2,
+            },
             stack,
         },
     }

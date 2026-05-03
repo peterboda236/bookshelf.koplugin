@@ -58,8 +58,9 @@ function ChipStrip:init()
             CenterContainer:new{
                 dimen = Geom:new{ w = w, h = self.height },
                 TextWidget:new{
-                    text    = chip.label,
-                    face    = Font:getFace("infofont", 10),
+                    text    = (chip.label or ""):upper(),
+                    face    = Font:getFace("infofont", 16),
+                    bold    = true,
                     fgcolor = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
                 }
             }

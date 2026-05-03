@@ -130,8 +130,15 @@ function BookshelfWidget:_rebuild()
     -- ── Hero card ─────────────────────────────────────────────────────────────
     local current = Repo.getCurrent()
     if current then Repo.enrichStats(current) end
+    -- KOReader doesn't track EPUB page numbers outside an active reader
+    -- session — `last_page` and `pages` are nil for cre documents on the
+    -- home screen — so the page-X-of-Y formula reliably resolves to empty
+    -- on the most common book format. The default line falls back to just
+    -- the percentage. Users with PDF/CBZ libraries (where page counts ARE
+    -- tracked) can still type "%page_num / %page_count · %book_pct" into
+    -- Settings → Edit hero card lines.
     local lines = G_reader_settings:readSetting("bookshelf_hero_lines") or {
-        "Page %page_num / %page_count · %book_pct",
+        "[if:page_num]Page %page_num / %page_count · %book_pct[else]%book_pct[/if]",
         "[if:book_time_left]%book_time_left LEFT[else]Open to start reading[/if]",
     }
     local hero = HeroCard:new{

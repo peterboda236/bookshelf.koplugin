@@ -119,14 +119,16 @@ function HeroCard:_renderFull()
         end
     end
 
-    -- Progress bar anchored to the bottom of the right column.
-    -- book.book_pct is a 0..1 float from DocSettings "percent_finished".
-    -- ProgressWidget's `percentage` also expects 0..1 — no conversion needed.
+    -- Progress bar anchored to the bottom of the right column. Height now
+    -- matches a token line's text height (font 14 → ~14dp at native scale)
+    -- so it reads as a real bar, not a hairline. Bookends uses the same
+    -- proportion for inline progress widgets.
     local right_bottom
     if self.book.book_pct then
+        local Screen = require("device").screen
         right_bottom = ProgressWidget:new{
             width      = right_w,
-            height     = Size.line.progress,   -- ~7dp, slightly thicker than focus_indicator
+            height     = Screen:scaleBySize(14),
             percentage = self.book.book_pct,
             margin_h   = 0,
             margin_v   = 0,
