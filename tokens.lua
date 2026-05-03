@@ -38,6 +38,23 @@ Tokens.expanders.pages_left     = function(b)
     return tostring(b.page_count - b.page_num)
 end
 
+local function timeNow(state)
+    return (state and state.now) or os.time()
+end
+local function fmt(spec, state) return os.date(spec, timeNow(state)) end
+
+Tokens.expanders.time     = function(_b, s) return fmt("%H:%M", s) end
+Tokens.expanders.time_24h = function(_b, s) return fmt("%H:%M", s) end
+Tokens.expanders.time_12h = function(_b, s)
+    local t = fmt("%I:%M %p", s)
+    return (t:gsub("^0", ""))
+end
+Tokens.expanders.date          = function(_b, s) return fmt("%d %b", s):gsub("^0", "") end
+Tokens.expanders.date_long     = function(_b, s) return fmt("%d %B %Y", s):gsub("^0", "") end
+Tokens.expanders.date_numeric  = function(_b, s) return fmt("%d/%m/%Y", s) end
+Tokens.expanders.weekday       = function(_b, s) return fmt("%A", s) end
+Tokens.expanders.weekday_short = function(_b, s) return fmt("%a", s) end
+
 -- Match longest token names first so %book_pct_left wins over %book_pct.
 local function compareLengthDesc(a, b) return #a > #b end
 local function tokenNamesByLengthDesc()
@@ -47,10 +64,16 @@ local function tokenNamesByLengthDesc()
     return names
 end
 
+local function expandDatetimeBraces(format, state)
+    return (format:gsub("%%datetime{(.-)}", function(spec)
+        return os.date(spec, timeNow(state))
+    end))
+end
+
 function Tokens.expand(format, book, state)
     if not format or format == "" then return "" end
+    local result = expandDatetimeBraces(format, state)
     local names = tokenNamesByLengthDesc()
-    local result = format
     for _, name in ipairs(names) do
         local expander = Tokens.expanders[name]
         result = result:gsub("%%" .. name, function()

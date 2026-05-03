@@ -93,5 +93,22 @@ test("position: %pages_left = page_count - page_num", function()
     eq(Tokens.expand("%pages_left", b), "546")
 end)
 
+local function clockState()
+    return { now = os.time({ year=2026, month=5, day=3, hour=14, min=35, sec=0 }) }
+end
+
+test("time: %time_24h", function()
+    eq(Tokens.expand("%time_24h", bookFixture(), clockState()), "14:35")
+end)
+test("time: %time_12h", function()
+    eq(Tokens.expand("%time_12h", bookFixture(), clockState()), "2:35 PM")
+end)
+test("date: %weekday", function()
+    eq(Tokens.expand("%weekday", bookFixture(), clockState()), "Sunday")
+end)
+test("datetime: custom strftime", function()
+    eq(Tokens.expand("%datetime{%d %B}", bookFixture(), clockState()), "03 May")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)
