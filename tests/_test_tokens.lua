@@ -131,5 +131,29 @@ test("device: %wifi on → glyph placeholder", function()
     eq(Tokens.expand("%wifi", bookFixture(), { wifi = "on" }), "📶")
 end)
 
+test("if: token-truthy", function()
+    local b = bookFixture()
+    eq(Tokens.expand("[if:series]Series: %series_name[/if]", b), "Series: Dune")
+end)
+test("if: token-falsy → empty", function()
+    local b = bookFixture(); b.series = nil; b.series_name = nil
+    eq(Tokens.expand("[if:series]Series: %series_name[/if]", b), "")
+end)
+test("if/else: book_pct numeric compare", function()
+    local b = bookFixture(); b.book_pct = 0.7
+    eq(Tokens.expand("[if:book_pct>50]Almost done[else]%book_pct[/if]", b), "Almost done")
+end)
+test("if: not operator", function()
+    local b = bookFixture(); b.series = nil
+    eq(Tokens.expand("[if:not series]Standalone[/if]", b), "Standalone")
+end)
+test("if: nested", function()
+    local b = bookFixture(); b.book_pct = 0.95
+    eq(Tokens.expand("[if:book_pct>50][if:book_pct>90]Final![else]Halfway+[/if][/if]", b), "Final!")
+end)
+test("if: equality with quoted string", function()
+    eq(Tokens.expand([=[[if:author="Frank Herbert"]✓[/if]]=], bookFixture()), "✓")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)
