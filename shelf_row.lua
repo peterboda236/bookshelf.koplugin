@@ -54,13 +54,14 @@ end
 function ShelfRow.new(opts)
     local n_slots = 4
     -- Generous gap between covers so the shelf doesn't read as cramped.
-    -- Size.padding.fullscreen ≈ 15dp.
-    local gap     = opts.gap or Size.padding.fullscreen
+    -- Size.padding.fullscreen × 2 ≈ 30dp at native scaling.
+    local gap     = opts.gap or Size.padding.fullscreen * 2
     local slot_w  = math.floor((opts.width - gap * (n_slots - 1)) / n_slots)
-    -- Force a 2:3 aspect ratio (book-cover standard) so all spines look uniform.
-    -- The shelf row's overall height is ignored except for the dotted base; the
-    -- visual "shelf height" is the spine height, computed from slot_w.
-    local slot_h  = math.floor(slot_w * 1.5)
+    -- Slot height is now bounded by a max of 4:3 aspect (slot_w * 1.33) so
+    -- covers stay visually compact rather than dominating the row vertically.
+    -- The 4 covers plus generous gaps already takes plenty of horizontal
+    -- space; capping height keeps the books proportionally smaller.
+    local slot_h  = math.floor(slot_w * 1.33)
     local row     = HorizontalGroup:new{}
 
     for i = 1, n_slots do

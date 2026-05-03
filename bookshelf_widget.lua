@@ -321,6 +321,12 @@ function BookshelfWidget:_rebuild()
     -- page on first render.
     local paper_bg = Blitbuffer.COLOR_WHITE
 
+    -- Layout order: titlebar / hero / chips / shelf1 / shelf2 / footer-label.
+    -- Pagination label moved BELOW the shelves so the shelves dominate the
+    -- visual hierarchy and "1–8 of 10 ›" reads as a footer. VerticalSpan
+    -- separators between sections give the home screen breathing room.
+    local VerticalSpan = require("ui/widget/verticalspan")
+
     self[1] = FrameContainer:new{
         bordersize = 0,
         padding    = PAD,
@@ -332,11 +338,16 @@ function BookshelfWidget:_rebuild()
         VerticalGroup:new{
             align = "left",
             titlebar,
+            VerticalSpan:new{ width = Size.padding.large },
             hero,
+            VerticalSpan:new{ width = Size.padding.large },
             chips,
-            label_widget,
+            VerticalSpan:new{ width = Size.padding.large },
             row_top,
+            VerticalSpan:new{ width = Size.padding.fullscreen },
             row_bottom,
+            VerticalSpan:new{ width = Size.padding.large },
+            label_widget,
         },
     }
 end

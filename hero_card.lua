@@ -76,7 +76,10 @@ function HeroCard:_renderFull()
         on_hold = self.on_hold,
     }
 
-    local right_w = self.width - self.cover_w - Size.padding.default
+    -- Generous left padding between the cover and the right column so the
+    -- text content has visible breathing room. Size.padding.fullscreen ≈ 15dp.
+    local text_padding = Size.padding.fullscreen
+    local right_w = self.width - self.cover_w - text_padding * 2
     local title = TextBoxWidget:new{
         text  = self.book.title or "Untitled",
         face  = Font:getFace("infofont", 26),
@@ -143,7 +146,15 @@ function HeroCard:_renderFull()
         right = TopContainer:new{ dimen = right_dimen, right_top }
     end
 
-    return HorizontalGroup:new{ align = "top", cover, right }
+    -- Insert a HorizontalSpan between the cover and the right column so the
+    -- text doesn't butt up against the cover edge.
+    local HorizontalSpan = require("ui/widget/horizontalspan")
+    return HorizontalGroup:new{
+        align = "top",
+        cover,
+        HorizontalSpan:new{ width = text_padding },
+        right,
+    }
 end
 
 function HeroCard:onTap()  if self.on_tap  then self.on_tap(self.book)  end; return true end
