@@ -115,8 +115,21 @@ end
 -- ─── _rebuild ─────────────────────────────────────────────────────────────────
 
 function BookshelfWidget:_rebuild()
-    -- Release previous widget tree before replacing (Phase 5 lesson).
-    if self[1] and self[1].free then self[1]:free() end
+    -- Defer freeing the previous widget tree to the next UIManager tick.
+    -- Calling :free() synchronously during an event handler tears down
+    -- ImageWidget bb buffers that may still be referenced by an in-flight
+    -- paint, producing native segfaults (notably on rapid swipe-to-paginate).
+    -- nextTick lets the current event handler return, the new tree paint to
+    -- finish, and only then reaps the old tree's resources.
+    if self[1] and self[1].free then
+        local old_tree = self[1]
+        UIManager:nextTick(function()
+            local ok, err = pcall(function() old_tree:free() end)
+            if not ok then
+                require("logger").warn("[bookshelf] tree free failed:", err)
+            end
+        end)
+    end
 
     -- ── Single layout constant ────────────────────────────────────────────────
     -- ONE margin/padding value drives every gap on the home screen: page edges,
