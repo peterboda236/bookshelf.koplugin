@@ -208,11 +208,13 @@ Tokens.expanders.mem   = function(_b, s) return s and s.mem and (tostring(s.mem)
 Tokens.expanders.ram   = function(_b, s) return s and s.ram_mib and (tostring(s.ram_mib) .. " MiB") or "" end
 Tokens.expanders.disk  = function(_b, s) return s and s.disk_free or "" end
 
--- Bar: book-progress bar. The hero card has a dedicated ProgressWidget
--- separate from token lines in v0.1, so %bar inline expands to empty.
--- A future version may render an inline progress glyph here, matching
--- bookends' `%bar` semantics.
-Tokens.expanders.bar = function() return "" end
+-- %bar is intentionally NOT in the expander table. The hero card's
+-- progress renderer (buildProgressLine in hero_card.lua) detects %bar
+-- AFTER token expansion and splits the line into [before, BarWidget,
+-- after]. Adding an expander here would replace %bar with empty text
+-- before the renderer ever sees it. This mirrors the bookends approach
+-- (which uses a placeholder character) but keeps %bar as the literal
+-- four characters the user typed.
 
 -- ─── Conditional evaluator ──────────────────────────────────────────────────
 -- Recognises [if:cond]…[else]…[/if]. Cond grammar:

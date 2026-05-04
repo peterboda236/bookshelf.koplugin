@@ -196,8 +196,11 @@ test("isEmpty: only [b][i][u] tags strip, not arbitrary single-letter tags", fun
     eq(Tokens.isEmpty("[c]hi[/c]"), false)
 end)
 
-test("bar: %bar expands to empty (deferred to renderer)", function()
-    eq(Tokens.expand("%bar", bookFixture()), "")
+test("bar: %bar survives expansion as literal (renderer splits on it)", function()
+    eq(Tokens.expand("%bar", bookFixture()), "%bar")
+    -- Other tokens around %bar still expand normally.
+    local b = bookFixture(); b.book_pct = 0.36
+    eq(Tokens.expand("%book_pct  %bar  done", b), "36%  %bar  done")
 end)
 
 test("description: empty when book has no blurb", function()
