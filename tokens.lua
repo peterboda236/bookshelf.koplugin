@@ -7,6 +7,64 @@ local Tokens = {}
 -- Token registry: name → function(book, state) → string
 Tokens.expanders = {}
 
+-- Single source of truth for the default clock/status line template.
+-- Reused by hero_card.lua (fallback render) and settings.lua (Default
+-- button + initial value when the user has no custom line saved).
+Tokens.DEFAULT_CLOCK_LINE =
+    "%time_12h    [if:batt]%batt_icon %batt[/if]    "
+ .. "[if:light]%light_icon %light%[/if]    %wifi_icon"
+
+-- Token catalogue — drives the picker UI in settings.lua. Tokens that
+-- have no meaningful value on the homescreen (chapter, current page,
+-- etc.) are deliberately omitted. Categories give the picker a visual
+-- grouping; descriptions are shown next to the token literal.
+-- Only tokens that actually have data on the bookshelf home screen.
+-- Excluded: chapter/reader-context tokens (no current chapter on home),
+-- annotation counts (book_repository doesn't fetch them), %mem/%ram/%disk
+-- (not populated in _buildDeviceState).
+-- Caveats noted in descriptions: stats tokens need the readerstatistics
+-- plugin enabled; %page_num/%page_count are nil for EPUB on home screen.
+Tokens.CATALOGUE = {
+    { category = "Book",     token = "%title",            description = "Title" },
+    { category = "Book",     token = "%author",           description = "First author" },
+    { category = "Book",     token = "%authors",          description = "All authors" },
+    { category = "Book",     token = "%series_name",      description = "Series name" },
+    { category = "Book",     token = "%series_num",       description = "Series number" },
+    { category = "Book",     token = "%filename",         description = "File name" },
+    { category = "Book",     token = "%format",           description = "Format (EPUB/PDF/…)" },
+    { category = "Book",     token = "%lang",             description = "Language" },
+    { category = "Progress", token = "%book_pct",         description = "Percent read" },
+    { category = "Progress", token = "%book_pct_left",    description = "Percent left" },
+    { category = "Progress", token = "%page_num",         description = "Current page (PDF/CBZ only)" },
+    { category = "Progress", token = "%page_count",       description = "Total pages (PDF/CBZ only)" },
+    { category = "Progress", token = "%pages_left",       description = "Pages left (PDF/CBZ only)" },
+    { category = "Progress", token = "%book_time_left",   description = "Time left to finish (statistics)" },
+    { category = "Progress", token = "%book_read_time",   description = "Total time read (statistics)" },
+    { category = "Progress", token = "%book_pages_read",  description = "Pages read (statistics)" },
+    { category = "Progress", token = "%days_reading_book",description = "Days since first opened (statistics)" },
+    { category = "Progress", token = "%pages_per_day",    description = "Pages per day (statistics)" },
+    { category = "Progress", token = "%speed",            description = "Speed in pages/hour (statistics)" },
+    { category = "Time",     token = "%time_12h",         description = "Time (12-hour)" },
+    { category = "Time",     token = "%time_24h",         description = "Time (24-hour)" },
+    { category = "Time",     token = "%date",             description = "Date (e.g. 4 May)" },
+    { category = "Time",     token = "%date_long",        description = "Date (e.g. 4 May 2026)" },
+    { category = "Time",     token = "%date_numeric",     description = "Date (numeric)" },
+    { category = "Time",     token = "%weekday",          description = "Weekday" },
+    { category = "Time",     token = "%weekday_short",    description = "Weekday (short)" },
+    { category = "Device",   token = "%batt",             description = "Battery percentage" },
+    { category = "Device",   token = "%batt_icon",        description = "Battery icon (Nerd Font)" },
+    { category = "Device",   token = "%wifi_icon",        description = "Wi-Fi icon" },
+    { category = "Device",   token = "%light",            description = "Frontlight intensity" },
+    { category = "Device",   token = "%light_icon",       description = "Frontlight icon" },
+    { category = "Device",   token = "%warmth",           description = "Warmth value (natural-light only)" },
+    { category = "Device",   token = "%mem",              description = "System memory used (%)" },
+    { category = "Device",   token = "%ram",              description = "KOReader RSS (MiB)" },
+    { category = "Logic",    token = "[if:foo]…[/if]",    description = "Show … when token foo is set" },
+    { category = "Logic",    token = "[if:not foo]…[/if]",description = "Show … when foo is empty" },
+    { category = "Logic",    token = "[if:foo>50]…[/if]", description = "Numeric comparison" },
+    { category = "Logic",    token = "[if:foo]…[else]…[/if]", description = "If/else" },
+}
+
 local function metaToken(field)
     return function(book) return book and book[field] or "" end
 end
@@ -87,14 +145,30 @@ Tokens.expanders.annotations  = function(b)
     return total > 0 and tostring(total) or ""
 end
 
-Tokens.expanders.batt      = function(_b, s) return s and s.batt and (tostring(s.batt) .. "%") or "" end
+Tokens.expanders.batt       = function(_b, s) return s and s.batt and (tostring(s.batt) .. "%") or "" end
+-- Status-line icons use Nerd Font private-use-area codepoints. KOReader
+-- registers nerdfonts/symbols.ttf as a global font fallback (font.lua),
+-- so any TextWidget renders these without needing a special face.
 Tokens.expanders.batt_icon = function(_b, s)
     if not s or not s.batt then return "" end
-    if s.charging then return "⚡" end
-    if s.batt < 20 then return "🪫" end
-    return "🔋"
+    local ok, PowerD = pcall(function() return require("device"):getPowerDevice() end)
+    if not ok or not PowerD or not PowerD.getBatterySymbol then return "" end
+    return PowerD:getBatterySymbol(false, s.charging or false, s.batt) or ""
 end
-Tokens.expanders.wifi  = function(_b, s) return s and s.wifi == "on" and "📶" or "" end
+Tokens.expanders.light_icon = function(_b, s)
+    if not s or not s.light then return "" end
+    return s.light > 0 and "\xee\xb7\xa6"   -- U+EDE6 lightbulb-on
+                       or  "\xee\xa8\xb5"   -- U+EA35 lightbulb-outline
+end
+Tokens.expanders.wifi_icon = function(_b, s)
+    return (s and s.wifi == "on") and "\xee\xb2\xa8"   -- U+ECA8 wifi connected
+                                  or  "\xee\xb2\xa9"   -- U+ECA9 wifi-off
+end
+Tokens.expanders.wifi = Tokens.expanders.wifi_icon
+-- %charging is now redundant — %batt_icon already shows a charging glyph
+-- when the device is plugged in. Kept as an alias to %batt_icon so any
+-- existing user templates still work.
+Tokens.expanders.charging = function(b, s) return Tokens.expanders.batt_icon(b, s) end
 Tokens.expanders.light = function(_b, s) return s and s.light or "" end
 Tokens.expanders.warmth= function(_b, s) return s and s.warmth and tostring(s.warmth) or "" end
 Tokens.expanders.mem   = function(_b, s) return s and s.mem and (tostring(s.mem) .. "%") or "" end
