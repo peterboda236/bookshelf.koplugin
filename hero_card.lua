@@ -80,18 +80,20 @@ function HeroCard:_renderEmpty()
     }
 end
 
+-- Resolve a region's face: honour the user's saved font_face when set,
+-- otherwise fall through to the default infofont. font_size is always
+-- multiplied by the global bookshelf_font_scale via fontFace().
+local function regionFace(region)
+    return fontFace(region.font_face, region.font_size)
+end
+
 -- Build a TextBoxWidget for a single region using the resolved settings.
 local function buildText(text, region, width)
-    local face = region.font_face
-        and Font:getFace(region.font_face,
-                math.max(8, math.floor(region.font_size *
-                    ((G_reader_settings:readSetting("bookshelf_font_scale") or 100) / 100) + 0.5)))
-        or fontFace("infofont", region.font_size)
     local rendered = text
     if region.uppercase then rendered = rendered:upper() end
     return TextBoxWidget:new{
         text      = rendered,
-        face      = face,
+        face      = regionFace(region),
         bold      = region.bold or false,
         width     = width,
         alignment = region.alignment or "left",
@@ -105,31 +107,29 @@ local function buildProgressLine(expanded, region, width, book)
     if not has_bar then
         return buildText(expanded, region, width)
     end
+    -- Split on the FIRST %bar; defensively strip any further %bar tokens
+    -- from the trailing segment so a hand-edited template containing two
+    -- doesn't render the second as literal text.
     local before, after = expanded:match("^(.-)%%bar(.*)$")
-    if not before then before, after = expanded, "" end
+    before = before or expanded
+    after  = (after or ""):gsub("%%bar", "")
     before = before:gsub("%s+$", "")
-    after  = after:gsub("^%s+", "")
+    after  = after:gsub("^%s+", ""):gsub("%s+$", "")
 
-    local face = region.font_face
-        and Font:getFace(region.font_face,
-                math.max(8, math.floor(region.font_size *
-                    ((G_reader_settings:readSetting("bookshelf_font_scale") or 100) / 100) + 0.5)))
-        or fontFace("infofont", region.font_size)
+    local face = regionFace(region)
 
     local used_w = 0
-    local b_widget, b_width = nil, 0
-    if before and before ~= "" then
+    local b_widget = nil
+    if before ~= "" then
         local display = region.uppercase and before:upper() or before
         b_widget = TextWidget:new{ text = display, face = face, bold = region.bold or false }
-        b_width = b_widget:getSize().w
-        used_w = used_w + b_width
+        used_w = used_w + b_widget:getSize().w
     end
-    local a_widget, a_width = nil, 0
-    if after and after ~= "" then
+    local a_widget = nil
+    if after ~= "" then
         local display = region.uppercase and after:upper() or after
         a_widget = TextWidget:new{ text = display, face = face, bold = region.bold or false }
-        a_width = a_widget:getSize().w
-        used_w = used_w + a_width
+        used_w = used_w + a_widget:getSize().w
     end
 
     -- Bar height: explicit setting else font ascent (~font_size * scale).
@@ -226,14 +226,9 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         local breath   = Size.padding.default
         local available = cover_h - top_used - bottom_h - breath
         if available > Screen:scaleBySize(40) then
-            local face = regions.description.font_face
-                and Font:getFace(regions.description.font_face,
-                        math.max(8, math.floor(regions.description.font_size *
-                            ((G_reader_settings:readSetting("bookshelf_font_scale") or 100) / 100) + 0.5)))
-                or fontFace("infofont", regions.description.font_size)
             right_top[#right_top + 1] = TextBoxWidget:new{
                 text                          = desc_text,
-                face                          = face,
+                face                          = regionFace(regions.description),
                 bold                          = regions.description.bold or false,
                 width                         = right_w,
                 height                        = available,
