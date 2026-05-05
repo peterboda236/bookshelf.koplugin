@@ -217,12 +217,59 @@ function BookshelfWidget:_rebuild()
     local chip_h  = Size.item.height_default
     local label_h = Size.item.height_default
 
+    -- Detect "all chips disabled" early so the hero can grow into the
+    -- chip strip's vertical footprint when it would otherwise be empty.
+    -- The chip strip stays visible whenever a drill-down path is active
+    -- (so the user can navigate back via the breadcrumb), even if every
+    -- chip is disabled.
+    local CHIP_LABELS = {
+        recent = "Recent", latest = "Latest", series = "Series", favorites = "Favourites",
+    }
+    local CHIP_ORDER = { "recent", "latest", "series", "favorites" }
+    local disabled_set = G_reader_settings:readSetting("bookshelf_chips_disabled") or {}
+    local active_chips = {}
+    for _, key in ipairs(CHIP_ORDER) do
+        if not disabled_set[key] then
+            active_chips[#active_chips + 1] = { key = key, label = CHIP_LABELS[key] }
+        end
+    end
+    local hide_chip_strip = (#active_chips == 0) and (#self._drilldown_path == 0)
+    -- Defensive: the user can disable every chip via the settings menu.
+    -- Fall back to the canonical four for chip selection so the shelves
+    -- still have a data source even when the strip is hidden.
+    if #active_chips == 0 then
+        for _, key in ipairs(CHIP_ORDER) do
+            active_chips[#active_chips + 1] = { key = key, label = CHIP_LABELS[key] }
+        end
+    end
+    -- If the currently-selected chip was just disabled, switch to the
+    -- first surviving chip so render doesn't try to fetch from a
+    -- disabled chip's data source.
+    local active_in_set = false
+    for _, c in ipairs(active_chips) do
+        if c.key == self.chip then active_in_set = true; break end
+    end
+    if not active_in_set then
+        self.chip = active_chips[1].key
+        G_reader_settings:saveSetting("bookshelf_active_chip", self.chip)
+    end
+
     -- Hero card sized exactly to its cover (no internal padding budget). The
     -- VerticalSpan separators below the hero supply the gap to the chips, so
     -- adding internal padding here would double-count the space.
     local hero_cover_w = math.floor(content_w * 0.30)
     local hero_cover_h = math.floor(hero_cover_w * 1.5)
     local hero_h       = hero_cover_h
+    if hide_chip_strip then
+        -- Absorb chip_h + ONE adjacent PAD span. The other PAD span stays
+        -- so the hero still has breathing room above the shelves. The
+        -- 2:3 cover aspect ratio is preserved — both cover_w and cover_h
+        -- grow proportionally.
+        local freed = chip_h + PAD
+        hero_h       = hero_h + freed
+        hero_cover_h = hero_h
+        hero_cover_w = math.floor(hero_cover_h / 1.5)
+    end
 
     -- Title bar removed: clock + battery moved to the bottom of the hero
     -- card right column (large font, below the progress bar). The gear
@@ -230,9 +277,17 @@ function BookshelfWidget:_rebuild()
     -- and via long-press on the hero or any cover.
     local titlebar_h = 0
 
-    -- Each shelf row shares the remaining vertical space equally.
-    local reserved_h = titlebar_h + hero_h + chip_h + label_h + PAD * 4
-    local shelf_h    = math.floor((self.height - reserved_h) / 2)
+    -- Each shelf row shares the remaining vertical space equally. When
+    -- the chip strip is hidden the hero already absorbed chip_h + PAD,
+    -- so reserved_h's chip-strip contributions drop out and the
+    -- shelf_h calculation lands on the same value either way.
+    local reserved_h
+    if hide_chip_strip then
+        reserved_h = titlebar_h + hero_h + label_h + PAD * 3
+    else
+        reserved_h = titlebar_h + hero_h + chip_h + label_h + PAD * 4
+    end
+    local shelf_h = math.floor((self.height - reserved_h) / 2)
 
     -- ── Hero card ─────────────────────────────────────────────────────────────
     -- Hero shows the user's "selected" book: a previewed shelf book if any,
@@ -258,39 +313,8 @@ function BookshelfWidget:_rebuild()
     -- ── Chip strip ────────────────────────────────────────────────────────────
     -- Two modes share the same widget: chips-list at top level, or a
     -- breadcrumb when the user has drilled into a chip-level item.
-    -- The list is filtered against bookshelf_chips_disabled so the user
-    -- can hide chips they don't use (e.g. Favourites if they don't
-    -- favourite books).
-    local CHIP_LABELS = {
-        recent = "Recent", latest = "Latest", series = "Series", favorites = "Favourites",
-    }
-    local CHIP_ORDER = { "recent", "latest", "series", "favorites" }
-    local disabled_set = G_reader_settings:readSetting("bookshelf_chips_disabled") or {}
-    local active_chips = {}
-    for _, key in ipairs(CHIP_ORDER) do
-        if not disabled_set[key] then
-            active_chips[#active_chips + 1] = { key = key, label = CHIP_LABELS[key] }
-        end
-    end
-    -- Defensive: the user can disable every chip via the settings menu.
-    -- Fall back to the canonical four so we never render an empty strip;
-    -- the next time settings change a chip is re-enabled this resolves.
-    if #active_chips == 0 then
-        for _, key in ipairs(CHIP_ORDER) do
-            active_chips[#active_chips + 1] = { key = key, label = CHIP_LABELS[key] }
-        end
-    end
-    -- If the currently-selected chip was just disabled, switch to the
-    -- first surviving chip so render doesn't try to fetch from a
-    -- disabled chip's data source.
-    local active_in_set = false
-    for _, c in ipairs(active_chips) do
-        if c.key == self.chip then active_in_set = true; break end
-    end
-    if not active_in_set then
-        self.chip = active_chips[1].key
-        G_reader_settings:saveSetting("bookshelf_active_chip", self.chip)
-    end
+    -- Skipped entirely when hide_chip_strip is true (every chip
+    -- disabled AND no drill-down) so the hero can claim the slot.
     local breadcrumb_path = nil
     if #self._drilldown_path > 0 then
         breadcrumb_path = {}
@@ -298,7 +322,7 @@ function BookshelfWidget:_rebuild()
             breadcrumb_path[i] = { label = entry.label }
         end
     end
-    local chips = ChipStrip:new{
+    local chips = not hide_chip_strip and ChipStrip:new{
         chips             = active_chips,
         active            = self.chip,
         width             = content_w,
@@ -391,14 +415,24 @@ function BookshelfWidget:_rebuild()
         }
 
         local VerticalSpan = require("ui/widget/verticalspan")
-        local empty_vgroup = VerticalGroup:new{
-            align = "left",
-            hero,
-            VerticalSpan:new{ width = PAD },
-            chips,
-            VerticalSpan:new{ width = PAD },
-            placeholder,
-        }
+        local empty_vgroup
+        if hide_chip_strip then
+            empty_vgroup = VerticalGroup:new{
+                align = "left",
+                hero,
+                VerticalSpan:new{ width = PAD },
+                placeholder,
+            }
+        else
+            empty_vgroup = VerticalGroup:new{
+                align = "left",
+                hero,
+                VerticalSpan:new{ width = PAD },
+                chips,
+                VerticalSpan:new{ width = PAD },
+                placeholder,
+            }
+        end
         self._hero_parent = empty_vgroup        -- hero lives at index 1
         self[1] = FrameContainer:new{
             bordersize = 0,
@@ -431,19 +465,36 @@ function BookshelfWidget:_rebuild()
 
     -- Inner content gets horizontal padding only; the titlebar above does
     -- not, so it spans the full screen width. Vertical PADs come from the
-    -- VerticalSpan separators in the inner VerticalGroup.
-    local inner_vgroup = VerticalGroup:new{
-        align = "left",
-        hero,
-        VerticalSpan:new{ width = PAD },
-        chips,
-        VerticalSpan:new{ width = PAD },
-        row_top,
-        VerticalSpan:new{ width = PAD },
-        row_bottom,
-        VerticalSpan:new{ width = PAD },
-        label_widget,
-    }
+    -- VerticalSpan separators in the inner VerticalGroup. When the chip
+    -- strip is hidden, the chip widget and one of its surrounding PAD
+    -- spans drop out — the remaining PAD keeps the hero from butting
+    -- straight against the top shelf row.
+    local inner_vgroup
+    if hide_chip_strip then
+        inner_vgroup = VerticalGroup:new{
+            align = "left",
+            hero,
+            VerticalSpan:new{ width = PAD },
+            row_top,
+            VerticalSpan:new{ width = PAD },
+            row_bottom,
+            VerticalSpan:new{ width = PAD },
+            label_widget,
+        }
+    else
+        inner_vgroup = VerticalGroup:new{
+            align = "left",
+            hero,
+            VerticalSpan:new{ width = PAD },
+            chips,
+            VerticalSpan:new{ width = PAD },
+            row_top,
+            VerticalSpan:new{ width = PAD },
+            row_bottom,
+            VerticalSpan:new{ width = PAD },
+            label_widget,
+        }
+    end
     self._hero_parent = inner_vgroup            -- hero lives at index 1
     -- Pagination fast-path stash: _swapShelvesInPlace re-renders only
     -- indices [shelf_top_idx, shelf_bottom_idx, footer_idx] of inner_vgroup,
@@ -456,9 +507,13 @@ function BookshelfWidget:_rebuild()
         shelf_h          = shelf_h,
         label_h          = label_h,
         PAD              = PAD,
-        shelf_top_idx    = 5,   -- hero, span, chips, span, ROW_TOP, ...
-        shelf_bottom_idx = 7,
-        footer_idx       = 9,
+        -- Index layout depends on whether the chip strip is in the
+        -- vgroup. With chips: hero, span, chips, span, ROW_TOP, span,
+        -- ROW_BOTTOM, span, FOOTER → indices 5/7/9. Without chips:
+        -- hero, span, ROW_TOP, span, ROW_BOTTOM, span, FOOTER → 3/5/7.
+        shelf_top_idx    = hide_chip_strip and 3 or 5,
+        shelf_bottom_idx = hide_chip_strip and 5 or 7,
+        footer_idx       = hide_chip_strip and 7 or 9,
     }
     local inner_content = FrameContainer:new{
         bordersize    = 0,
