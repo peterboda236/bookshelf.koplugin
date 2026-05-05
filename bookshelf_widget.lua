@@ -199,8 +199,18 @@ function BookshelfWidget:_rebuild()
     -- ONE margin/padding value drives every gap on the home screen: page edges,
     -- cover-to-cover gap, hero text indent, and inter-section vertical gaps.
     -- Adjust this to tighten or loosen the entire layout proportionally.
-    local PAD       = math.floor(Size.padding.fullscreen * 2 * 0.8)  -- ~24dp (was 30dp)
-    local content_w = self.width - PAD * 2
+    --
+    -- Capped at ~3% of screen width so it stays sensible at extreme DPI /
+    -- font scale settings. Without the cap, Size.padding.fullscreen
+    -- (which itself scales with DPI) would inflate from ~32px at native
+    -- DPI to ~120px at 640dpi — eating 240px of width per row, which
+    -- visibly shrinks every cover thumbnail. The cap means at any DPI
+    -- the layout reserves the same proportional whitespace, so covers
+    -- keep their relative size.
+    local pad_natural = math.floor(Size.padding.fullscreen * 2 * 0.8)
+    local pad_capped  = math.floor(self.width * 0.03)
+    local PAD         = math.min(pad_natural, pad_capped)
+    local content_w   = self.width - PAD * 2
 
     -- Height constants. Size.item.height_small does not exist (Phase 3-5 lesson);
     -- use height_default (~30dp) for all bar-height components.
