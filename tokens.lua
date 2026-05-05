@@ -99,19 +99,61 @@ local function codepointToUtf8(n)
     return ""
 end
 
+-- Named HTML entities common in <dc:description> blocks. Mirrors the table
+-- in KOReader's util.lua HTML_ENTITIES_TO_UTF8 so we cover the smart-quote
+-- and dash zoo most often seen in EPUBs (rsquo / ldquo / mdash etc.).
+-- Inlined here rather than `require("util")` so tokens.lua keeps loading
+-- in the pure-Lua test harness (which has no KOReader env).
+-- &amp; must be applied LAST: any other entity may itself contain '&', and
+-- decoding amp first would corrupt them.
+local HTML_NAMED_ENTITIES = {
+    { "&lt;",     "<"          },
+    { "&gt;",     ">"          },
+    { "&quot;",   '"'          },
+    { "&apos;",   "'"          },
+    { "&lsquo;",  "\xE2\x80\x98" }, -- U+2018
+    { "&rsquo;",  "\xE2\x80\x99" }, -- U+2019
+    { "&ldquo;",  "\xE2\x80\x9C" }, -- U+201C
+    { "&rdquo;",  "\xE2\x80\x9D" }, -- U+201D
+    { "&sbquo;",  "\xE2\x80\x9A" }, -- U+201A
+    { "&bdquo;",  "\xE2\x80\x9E" }, -- U+201E
+    { "&ndash;",  "\xE2\x80\x93" }, -- U+2013
+    { "&mdash;",  "\xE2\x80\x94" }, -- U+2014
+    { "&hellip;", "\xE2\x80\xA6" }, -- U+2026
+    { "&trade;",  "\xE2\x84\xA2" }, -- U+2122
+    { "&copy;",   "\xC2\xA9"     }, -- U+00A9
+    { "&reg;",    "\xC2\xAE"     }, -- U+00AE
+    { "&nbsp;",   "\xC2\xA0"     }, -- U+00A0
+    { "&amp;",    "&"            }, -- must be last
+}
+
 local function cleanDescription(raw)
     if not raw or raw == "" then return "" end
-    return (raw:gsub("<br%s*/?>", "\n")
-               :gsub("</p>",     "\n\n")
-               :gsub("<[^>]+>",  "")
-               :gsub("&amp;",    "&")
-               :gsub("&quot;",   "\"")
-               :gsub("&apos;",   "'")
-               :gsub("&lt;",     "<")
-               :gsub("&gt;",     ">")
-               -- Decimal numeric entities only; &#xHHHH; hex form is left as-is.
-               :gsub("&#(%d+);", codepointToUtf8)
-               :gsub("^%s+", ""):gsub("%s+$", ""))
+    local text = raw
+    -- Block-level tags become newlines BEFORE the generic strip pass.
+    -- Case-insensitive (some EPUBs uppercase tags). <div> is handled
+    -- alongside <p> because some publishers wrap each paragraph in a
+    -- <div> instead of a <p>.
+    text = text:gsub("<%s*[bB][rR]%s*/?>", "\n")
+    text = text:gsub("</%s*[pP]%s*>", "\n\n")
+    text = text:gsub("</%s*[dD][iI][vV]%s*>", "\n\n")
+    -- Generic strip for everything else (<p>, <span>, <i>, <b>, …).
+    text = text:gsub("<[^>]+>", "")
+    -- Named entities first.
+    for _i, pair in ipairs(HTML_NAMED_ENTITIES) do
+        text = text:gsub(pair[1], pair[2])
+    end
+    -- Numeric entities — both decimal (&#160;) and hex (&#xA0;).
+    text = text:gsub("&#(%d+);",      codepointToUtf8)
+    text = text:gsub("&#x(%x+);",     function(h) return codepointToUtf8(tonumber(h, 16)) end)
+    -- Collapse runs of 3+ newlines (publishers often have a literal
+    -- newline between </p> and the next <p>, which interacts with our
+    -- </p> → \n\n to produce 3 newlines = an extra blank line). Two
+    -- newlines = one blank line between paragraphs, which is what we
+    -- want.
+    text = text:gsub("\n\n\n+", "\n\n")
+    -- Trim leading/trailing whitespace + newlines.
+    return (text:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 Tokens.cleanDescription = cleanDescription      -- exported for tests / ad-hoc use

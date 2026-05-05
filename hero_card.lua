@@ -265,6 +265,11 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
                 height                        = available,
                 alignment                     = regions.description.alignment or "left",
                 height_overflow_show_ellipsis = true,
+                -- 1.3× line height. KOReader's TextBoxWidget computes
+                -- line_height_px = (1 + line_height) * face.size, so 0.3
+                -- = 1.3× — the existing class default, but pinned here
+                -- explicitly so it can't drift if the default ever shifts.
+                line_height = 0.3,
             }
         end
     end

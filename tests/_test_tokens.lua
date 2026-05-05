@@ -254,5 +254,45 @@ test("description: trims surrounding whitespace", function()
     eq(Tokens.expand("%description", b), "leading and trailing")
 end)
 
+test("description: decodes &rsquo; / &lsquo; / &ldquo; / &rdquo;", function()
+    local b = bookFixture()
+    b.description = "&lsquo;hi&rsquo; said &ldquo;the cat&rdquo;"
+    eq(Tokens.expand("%description", b),
+       "\xE2\x80\x98hi\xE2\x80\x99 said \xE2\x80\x9Cthe cat\xE2\x80\x9D")
+end)
+
+test("description: decodes &mdash; / &ndash; / &hellip; / &nbsp;", function()
+    local b = bookFixture()
+    b.description = "wait&hellip; ndash&ndash;mdash&mdash;nbsp&nbsp;end"
+    eq(Tokens.expand("%description", b),
+       "wait\xE2\x80\xA6 ndash\xE2\x80\x93mdash\xE2\x80\x94nbsp\xC2\xA0end")
+end)
+
+test("description: decodes hex numeric entity", function()
+    local b = bookFixture()
+    b.description = "It&#x2019;s &#xA9; mine"
+    eq(Tokens.expand("%description", b), "It\xE2\x80\x99s \xC2\xA9 mine")
+end)
+
+test("description: <div> blocks become paragraphs", function()
+    local b = bookFixture()
+    b.description = "<div>One</div><div>Two</div>"
+    eq(Tokens.expand("%description", b), "One\n\nTwo")
+end)
+
+test("description: collapses 3+ newlines to 2", function()
+    local b = bookFixture()
+    -- Source has literal \n between </p> and <p>: </p> → \n\n, then the
+    -- existing \n adds a third → would render as a triple-blank line.
+    b.description = "<p>One</p>\n<p>Two</p>"
+    eq(Tokens.expand("%description", b), "One\n\nTwo")
+end)
+
+test("description: case-insensitive tags (BR, P, DIV)", function()
+    local b = bookFixture()
+    b.description = "<P>Upper</P><BR/>after"
+    eq(Tokens.expand("%description", b), "Upper\n\nafter")
+end)
+
 io.write(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)

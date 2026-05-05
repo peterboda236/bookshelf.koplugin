@@ -788,7 +788,13 @@ function BookshelfWidget:_swapHeroRightColumnInPlace(regions)
         Repo.enrichStats(current)
     end
     local ok = hero:replaceRightColumn(regions, current, self:_buildDeviceState())
-    if ok then UIManager:setDirty(self, "fast") end
+    -- "ui" rather than "fast": the size-nudge dialog (and any other style
+    -- adjuster) sits OVER bookshelf, and a "fast" panel refresh is 1-bit
+    -- monochrome — it strips greyscale across the whole screen including
+    -- the dialog itself, until the next non-fast paint. "ui" is partial
+    -- but greyscale-preserving; the small flicker per keystroke is a
+    -- better trade than the dialog turning black-and-white.
+    if ok then UIManager:setDirty(self, "ui") end
     return ok
 end
 
