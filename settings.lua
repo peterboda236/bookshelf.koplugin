@@ -581,11 +581,11 @@ function Settings:_betaSubItems()
                 .. "needed. BIM-cached metadata still wins per field; "
                 .. "Calibre data only fills gaps."),
             checked_func = function()
-                return G_reader_settings:isTrue("bookshelf_calibre_metadata")
+                return G_reader_settings:readSetting("bookshelf_calibre_metadata") == true
             end,
             keep_menu_open = true,
             callback = function()
-                local enabled = G_reader_settings:isTrue("bookshelf_calibre_metadata")
+                local enabled = G_reader_settings:readSetting("bookshelf_calibre_metadata") == true
                 G_reader_settings:saveSetting("bookshelf_calibre_metadata", not enabled)
                 G_reader_settings:flush()
                 -- Invalidate the walk + group caches so the toggle

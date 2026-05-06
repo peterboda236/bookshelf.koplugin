@@ -56,7 +56,9 @@ local function _calibreMetadataFor(filepath)
     -- Beta-gated: only fires when the user opts in via Settings →
     -- Beta features. Default OFF so non-Calibre users (the majority)
     -- pay no cost — neither the file probe nor the JSON parse runs.
-    if not G_reader_settings:isTrue("bookshelf_calibre_metadata") then
+    -- Truthy check via readSetting (rather than isTrue) so the test
+    -- stub for G_reader_settings doesn't need to grow another method.
+    if not G_reader_settings:readSetting("bookshelf_calibre_metadata") then
         return nil
     end
     local now = os.time()
