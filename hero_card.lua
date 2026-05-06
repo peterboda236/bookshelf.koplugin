@@ -258,6 +258,18 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         end
     end
 
+    -- Metadata (between author and description). Default template is
+    -- conditional on series, so books without a series collapse this line
+    -- entirely via the Tokens.isEmpty check rather than leaving a blank
+    -- vertical gap.
+    if regions.metadata and not regions.metadata.disabled then
+        local metadata_text = Tokens.expand(regions.metadata.template, book, state)
+        metadata_text = metadata_text:gsub("%[/?[biu]%]", "")
+        if not Tokens.isEmpty(metadata_text) then
+            right_top[#right_top + 1] = buildText(metadata_text, regions.metadata, right_w)
+        end
+    end
+
     -- Progress (bottom-anchored). If the book has never been opened
     -- (book.book_pct nil — note that 0 is *truthy* in Lua so a
     -- briefly-opened-but-unread book at 0% still keeps its %bar) the

@@ -9,7 +9,7 @@ Regions.SETTINGS_KEY = "bookshelf_hero_regions"
 
 -- Render order from top to bottom. Renderer and chooser modal both use
 -- this list. Adding a region means adding it here AND adding a default.
-Regions.ORDER = { "status", "title", "author", "description", "progress" }
+Regions.ORDER = { "status", "title", "author", "metadata", "description", "progress" }
 
 Regions.DEFAULTS = {
     status = {
@@ -29,6 +29,19 @@ Regions.DEFAULTS = {
         uppercase = false,
         alignment = "left",
     },
+    -- Metadata: an extra line between author and description. EPUB has no
+    -- formal subtitle/metadata field, but the dominant use case is showing
+    -- series info via a conditional template — the user can substitute
+    -- their own static text or template for any other purpose. Empty
+    -- template = region collapses (Tokens.isEmpty check skips paint).
+    metadata = {
+        template  = "[if:series]%series_name[if:series_num] / #%series_num[/if][/if]",
+        font_face = nil,
+        font_size = 14,
+        bold      = true,
+        uppercase = false,
+        alignment = "right",
+    },
     author = {
         template  = "[if:authors]%authors[else]%author[/if]",
         font_face = nil,
@@ -46,7 +59,7 @@ Regions.DEFAULTS = {
         -- no `uppercase` — would be hostile on a long blurb
     },
     progress = {
-        template   = "%book_pct  %bar  [if:book_time_left]%book_time_left LEFT[/if]",
+        template   = "[if:page_num]%page_num / %page_count[else]%book_pct[/if]  %bar  [if:book_time_left]%book_time_left LEFT[/if]",
         font_face  = nil,
         font_size  = 14,
         bold       = true,
@@ -62,6 +75,7 @@ Regions.LABELS = {
     status      = "Status line",
     title       = "Title",
     author      = "Author",
+    metadata    = "Metadata",
     description = "Description",
     progress    = "Progress",
 }
