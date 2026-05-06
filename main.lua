@@ -259,11 +259,10 @@ function Bookshelf:_extendMenuOrder()
     for _, id in ipairs(order["KOMenu:menu_buttons"]) do
         if id == "bookshelf_tab" then return end
     end
-    -- Append rather than inserting at a fixed position: any index > 1 keeps
-    -- filemanager_settings at [1] (so MenuSorter's orphan pass doesn't dump
-    -- unrelated plugins into our tab), and appending is collision-safe when
-    -- multiple plugins each add their own tab.
-    table.insert(order["KOMenu:menu_buttons"], "bookshelf_tab")
+    -- Position 2: filemanager_settings stays at [1] so MenuSorter's orphan
+    -- pass (which hardcodes table.insert([1], v)) doesn't dump unrelated
+    -- plugin entries into the Bookshelf tab.
+    table.insert(order["KOMenu:menu_buttons"], 2, "bookshelf_tab")
     order.bookshelf_tab = {
         "bookshelf_toggle",
         "bookshelf_hero_card",
