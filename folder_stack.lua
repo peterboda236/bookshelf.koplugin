@@ -49,8 +49,10 @@ local SpineWidget    = require("spine_widget")
 --   y at x=w-1 is SLOPE_RIGHT_FRAC·card_h
 -- Below max(SLOPE_LEFT_FRAC, SLOPE_RIGHT_FRAC) the cardboard is
 -- full-width — that's the "rectangle" where the label lives.
-local SLOPE_LEFT_FRAC  = 0.50
-local SLOPE_RIGHT_FRAC = 0.60
+-- Magazine height reduced by ≈ 1/3 from the prior 0.50/0.60 so the
+-- book peeks more prominently above the cardboard.
+local SLOPE_LEFT_FRAC  = 0.67
+local SLOPE_RIGHT_FRAC = 0.73
 
 -- Cardboard colour and a darker outline. Slightly denser than the
 -- earlier values so the magazine reads as a solid object on the page
@@ -149,8 +151,18 @@ function MagazinePolygon:paintTo(bb, x, y)
         local b    = Size.border.thin
         local edge = self.edge_color
         bb:paintRect(x + r, y + h - b, w - 2 * r, b, edge)            -- bottom
-        bb:paintRect(x + w - b, y + y_min, b, h - y_min - r, edge)    -- right (back wall)
-        bb:paintRect(x, y + yl, b, h - yl - r, edge)                  -- left (front wall)
+        -- Side edges start where the slope MEETS each side, not at
+        -- y_min — using y_min painted a stray strip from y_min up to
+        -- yr on whichever side the slope was lower (visible as a thin
+        -- black line extending past the polygon's actual outline).
+        local right_h = h - yr - r
+        if right_h > 0 then
+            bb:paintRect(x + w - b, y + yr, b, right_h, edge)         -- right edge
+        end
+        local left_h = h - yl - r
+        if left_h > 0 then
+            bb:paintRect(x, y + yl, b, left_h, edge)                   -- left edge
+        end
         -- Slope.
         local steps = math.max(w, math.abs(yr - yl))
         for s = 0, steps do
@@ -253,7 +265,7 @@ function FolderStack:init()
     local label_top     = math.max(y_left, y_right) + label_pad
     local label_h_avail = card_h - label_top - label_pad
     local label_w_avail = card_w - label_pad * 2
-    local face          = Font:getFace("infofont", 14)
+    local face          = Font:getFace("infofont", 16)
     local probe = TextBoxWidget:new{
         text  = label_text,
         face  = face,
