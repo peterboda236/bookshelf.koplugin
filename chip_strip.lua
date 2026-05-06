@@ -220,14 +220,25 @@ function ChipStrip:_initChips()
         -- icon centred in the cell instead of text. Active state on
         -- icon chips inverts the icon by drawing on a black background.
         local cell_content
-        if chip.icon then
+        if chip.nerd_glyph then
+            -- Nerd-font glyph chip. KOReader bundles
+            -- fonts/nerdfonts/symbols.ttf, and the xtext / harfbuzz
+            -- pipeline falls back to it for any codepoint outside
+            -- infofont's range — so we just put the UTF-8-encoded
+            -- glyph in a TextWidget at the chip-label point size
+            -- and the bold solid shape comes through as the user
+            -- expects (vs the thin appbar.search SVG).
+            cell_content = TextWidget:new{
+                text    = chip.nerd_glyph,
+                face    = Font:getFace("infofont", 18),
+                fgcolor = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
+            }
+        elseif chip.icon then
             local IconWidget = require("ui/widget/iconwidget")
             -- Icon at ~75% of chip height. KOReader only ships the
             -- mdlight ("light" weight) icon set; bumping the render
             -- size compensates for the thin strokes so the icon
-            -- reads as substantial against the chip border. Bold
-            -- icon variants from nerd-font / mdbold sets aren't
-            -- available without a separate icon-pack install.
+            -- reads as substantial against the chip border.
             local icon_size  = math.floor(self.height * 0.75)
             cell_content = IconWidget:new{
                 icon   = chip.icon,

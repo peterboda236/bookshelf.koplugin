@@ -268,7 +268,10 @@ function BookshelfWidget:_rebuild()
     -- chip-switch). Always appended last so it sits at the right edge.
     -- Tap is intercepted in the on_change closure below — search never
     -- becomes self.chip, so it doesn't enter the swipe-cycle.
-    active_chips[#active_chips + 1] = { key = "search", icon = "appbar.search" }
+    -- Nerd-font glyph U+F002 (fa-search) renders bolder than the
+    -- bundled mdlight appbar.search SVG; ChipStrip threads it through
+    -- a TextWidget with KOReader's xtext fallback to symbols.ttf.
+    active_chips[#active_chips + 1] = { key = "search", nerd_glyph = "\xEF\x80\x82" }
     -- Cache the ordered chip keys + hidden state so the edge-swipe
     -- handlers can cycle between tabs without re-deriving them. The
     -- list reflects whatever ordering active_chips had built (today

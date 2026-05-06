@@ -842,20 +842,23 @@ function Repo.getAuthors(limit)
     local key   = (home or "/") .. ":" .. tostring(depth or 0)
     local now   = os.time()
     local cached = _authors_cache[key]
-    if cached and cached.expires_at > now then
-        local out = {}
-        for i = 1, math.min(limit or 8, #cached.groups) do
-            out[i] = _hydrateGroupShape(cached.groups[i])
-        end
-        return out
+    if not cached or cached.expires_at <= now then
+        local list = _buildGroups("author", function(b) return b.author end, false)
+        _authors_cache[key] = {
+            groups     = _cacheGroupShapes(list, "author"),
+            expires_at = now + SERIES_CACHE_TTL,
+        }
+        cached = _authors_cache[key]
     end
-    local list = _buildGroups("author", function(b) return b.author end, false)
-    _authors_cache[key] = {
-        groups     = _cacheGroupShapes(list, "author"),
-        expires_at = now + SERIES_CACHE_TTL,
-    }
+    -- Always hydrate (even right after a build): _buildGroups can reuse
+    -- the same Book record across groups when a book has multiple keys,
+    -- and the resulting shared cover_bb segfaults when one SeriesStack
+    -- frees it while another still holds the reference. Hydrating from
+    -- shapes calls buildBookMeta per group → independent cover_bbs.
     local out = {}
-    for i = 1, math.min(limit or 8, #list) do out[i] = list[i] end
+    for i = 1, math.min(limit or 8, #cached.groups) do
+        out[i] = _hydrateGroupShape(cached.groups[i])
+    end
     return out
 end
 
@@ -865,20 +868,23 @@ function Repo.getGenres(limit)
     local key   = (home or "/") .. ":" .. tostring(depth or 0)
     local now   = os.time()
     local cached = _genres_cache[key]
-    if cached and cached.expires_at > now then
-        local out = {}
-        for i = 1, math.min(limit or 8, #cached.groups) do
-            out[i] = _hydrateGroupShape(cached.groups[i])
-        end
-        return out
+    if not cached or cached.expires_at <= now then
+        local list = _buildGroups("genre", function(b) return b.genres end, true)
+        _genres_cache[key] = {
+            groups     = _cacheGroupShapes(list, "genre"),
+            expires_at = now + SERIES_CACHE_TTL,
+        }
+        cached = _genres_cache[key]
     end
-    local list = _buildGroups("genre", function(b) return b.genres end, true)
-    _genres_cache[key] = {
-        groups     = _cacheGroupShapes(list, "genre"),
-        expires_at = now + SERIES_CACHE_TTL,
-    }
+    -- Always hydrate from shapes — see getAuthors above. For genres
+    -- (multi=true), a single book in "Sci-Fi, Fantasy" appears in both
+    -- groups; without fresh Book records per group both SeriesStacks
+    -- share the same cover_bb and the first to free it segfaults the
+    -- second. This was the cause of the genres-tab crash on first tap.
     local out = {}
-    for i = 1, math.min(limit or 8, #list) do out[i] = list[i] end
+    for i = 1, math.min(limit or 8, #cached.groups) do
+        out[i] = _hydrateGroupShape(cached.groups[i])
+    end
     return out
 end
 
