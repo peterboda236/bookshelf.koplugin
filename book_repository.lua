@@ -53,6 +53,12 @@ local _calibre_state = {
 
 local function _calibreMetadataFor(filepath)
     if not filepath then return nil end
+    -- Beta-gated: only fires when the user opts in via Settings →
+    -- Beta features. Default OFF so non-Calibre users (the majority)
+    -- pay no cost — neither the file probe nor the JSON parse runs.
+    if not G_reader_settings:isTrue("bookshelf_calibre_metadata") then
+        return nil
+    end
     local now = os.time()
     if (now - _calibre_state.last_check) <= CALIBRE_TTL
             and _calibre_state.map ~= nil then

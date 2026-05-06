@@ -554,9 +554,51 @@ function Settings:menuItems(bw, plugin)
             sub_item_table_func = function() return self:_updateSubItems() end,
         },
         {
+            text                = _("Beta features"),
+            sub_item_table_func = function() return self:_betaSubItems() end,
+        },
+        {
             text     = _("About"),
             callback = function() self:_about() end,
             separator = true,
+        },
+    }
+end
+
+-- _betaSubItems() — opt-in toggles for experimental features. Items here
+-- are off by default and gated separately from the rest so users running
+-- the stable build don't pay any cost. Each toggle is wired to clear the
+-- relevant Repo caches so the change applies on the next render without
+-- a manual refresh.
+function Settings:_betaSubItems()
+    return {
+        {
+            text = _("Read calibre metadata.calibre"),
+            help_text = _("For users with a Calibre-managed library. "
+                .. "Reads the metadata.calibre JSON file at home_dir to "
+                .. "cover title / authors / series / tags / language for "
+                .. "every book in the library — no per-book extraction "
+                .. "needed. BIM-cached metadata still wins per field; "
+                .. "Calibre data only fills gaps."),
+            checked_func = function()
+                return G_reader_settings:isTrue("bookshelf_calibre_metadata")
+            end,
+            keep_menu_open = true,
+            callback = function()
+                local enabled = G_reader_settings:isTrue("bookshelf_calibre_metadata")
+                G_reader_settings:saveSetting("bookshelf_calibre_metadata", not enabled)
+                G_reader_settings:flush()
+                -- Invalidate the walk + group caches so the toggle
+                -- applies on the very next chip render.
+                local ok, Repo = pcall(require, "book_repository")
+                if ok and Repo and Repo.invalidateWalkCache then
+                    Repo.invalidateWalkCache()
+                end
+                if self._bw and self._bw._rebuild then
+                    self._bw:_rebuild()
+                    UIManager:setDirty(self._bw, "ui")
+                end
+            end,
         },
     }
 end
