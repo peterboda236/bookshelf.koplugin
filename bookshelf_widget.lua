@@ -467,6 +467,13 @@ function BookshelfWidget:_rebuild()
     local row_top, row_bottom = self:_buildShelfRows(items, content_w, shelf_h, PAD)
     local label_widget = self:_buildPaginationFooter(content_w, label_h, total_pages)
 
+    -- Kick off BIM extraction for any displayed books with no cached
+    -- metadata. Cover-spec dims = single shelf slot.
+    local n_slots = 4
+    local slot_w  = math.floor((content_w - PAD * (n_slots - 1)) / n_slots)
+    local slot_h  = math.floor(slot_w * 1.5)
+    self:_kickOffMissingMetaExtraction(items, slot_w, slot_h)
+
     -- ── Assemble ──────────────────────────────────────────────────────────────
     -- Page background = pure white (e-ink unprinted paper). The defensive
     -- gray() guard from earlier was redundant AND used inverted semantics
@@ -554,6 +561,65 @@ function BookshelfWidget:_rebuild()
             inner_content,
         },
     }
+end
+
+-- ─── Background metadata extraction ──────────────────────────────────────────
+
+-- _kickOffMissingMetaExtraction(items, slot_w, slot_h)
+-- BookInfoManager only knows about books KOReader has already indexed. Books
+-- the user has dropped into their library but never opened (typical for a
+-- fresh sync from Calibre / Syncthing) have no cached title or cover; the
+-- shelf renders them with the filename + paper-tone fallback. Trigger BIM's
+-- background extraction subprocess for those files so the next render of the
+-- bookshelf has proper covers + titles. We pass through the slot dimensions
+-- as cover_specs so the cached cover thumbnail matches our display size.
+--
+-- Skips items where:
+--   * BIM already has metadata (info.has_meta == "Y")
+--   * BIM has tried max_extract_tries times and failed (info.in_progress >=
+--     max). Those will keep their filename fallback indefinitely; no point
+--     re-trying every render.
+--   * The item has no filepath (folder records, empty slots).
+--
+-- Folder records carry their own first_book — we queue that too so a folder
+-- whose representative book isn't indexed yet gets a real cover next render.
+function BookshelfWidget:_kickOffMissingMetaExtraction(items, slot_w, slot_h)
+    local ok, BIM = pcall(require, "bookinfomanager")
+    if not ok or not BIM or not BIM.getBookInfo then return end
+    local max_tries = BIM.max_extract_tries or 3
+    local files = {}
+    local seen  = {}
+    local function maybe_queue(fp)
+        if not fp or seen[fp] then return end
+        seen[fp] = true
+        local info = BIM:getBookInfo(fp, false)
+        local needs = false
+        if not info then
+            needs = true
+        elseif info.has_meta == nil
+                and (tonumber(info.in_progress) or 0) < max_tries then
+            needs = true
+        end
+        if needs then
+            files[#files + 1] = {
+                filepath    = fp,
+                cover_specs = { max_cover_w = slot_w, max_cover_h = slot_h },
+            }
+        end
+    end
+    for _, item in ipairs(items or {}) do
+        if item then
+            maybe_queue(item.filepath)
+            if item.first_book then
+                maybe_queue(item.first_book.filepath)
+            end
+        end
+    end
+    if #files > 0 then
+        UIManager:nextTick(function()
+            pcall(function() BIM:extractInBackground(files) end)
+        end)
+    end
 end
 
 -- ─── Data helpers ─────────────────────────────────────────────────────────────
@@ -868,6 +934,13 @@ function BookshelfWidget:_swapShelvesInPlace()
 
     local row_top, row_bottom = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.PAD)
     local footer = self:_buildPaginationFooter(d.content_w, d.label_h, total_pages)
+
+    -- Kick off BIM extraction for newly-paginated books that aren't
+    -- cached yet. Same slot dims as _rebuild's call.
+    local n_slots = 4
+    local slot_w  = math.floor((d.content_w - d.PAD * (n_slots - 1)) / n_slots)
+    local slot_h  = math.floor(slot_w * 1.5)
+    self:_kickOffMissingMetaExtraction(items, slot_w, slot_h)
 
     local old_top    = self._inner_vgroup[d.shelf_top_idx]
     local old_bottom = self._inner_vgroup[d.shelf_bottom_idx]
