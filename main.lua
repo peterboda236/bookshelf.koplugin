@@ -392,18 +392,23 @@ end
 
 -- _safeShow — show bookshelf, doing the right thing depending on whether
 -- the action was invoked from FM (overlay bookshelf directly) or from the
--- reader (close the document first, then schedule the show on the next
--- tick). Overlaying bookshelf on an actively-painting reader produces a
--- partial-paint glitch where reader pixels bleed through behind the
--- bookshelf widget; closing first puts FM under bookshelf, where it was
--- always meant to live.
+-- reader (route through the standard ReaderUI:onHome() path so the reader
+-- closes AND FM is recreated underneath, then schedule the bookshelf show
+-- on the next tick).
+--
+-- Why onHome() vs raw onClose: BookshelfWidget's gesture handling forwards
+-- top-zone taps / swipes to FileManager.instance's touch zones (so the
+-- standard FM menu is reachable from bookshelf). If the reader was launched
+-- directly (start_with=last) FM was never created — calling onClose alone
+-- leaves nothing underneath bookshelf and the menu becomes unreachable.
+-- onHome calls showFileManager which creates FM if missing.
 function Bookshelf:_safeShow()
-    if self.ui and self.ui.document then
-        self.ui:onClose()
-        -- onCloseDocument fires synchronously here. If start_with=bookshelf
-        -- it'll schedule its own show() — duplicate is idempotent because
-        -- Bookshelf:show() reuses an existing widget. We schedule too so
-        -- the gesture works regardless of the user's start_with setting.
+    if self.ui and self.ui.document and self.ui.onHome then
+        self.ui:onHome()
+        -- onCloseDocument fires synchronously inside onHome → FM is
+        -- foreground. We schedule bookshelf for the next tick so FM's
+        -- creation/show completes first, leaving FM as the painting
+        -- surface beneath the bookshelf overlay.
         UIManager:nextTick(function() self:show() end)
     else
         self:show()
