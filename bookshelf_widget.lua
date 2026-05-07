@@ -258,6 +258,14 @@ end
 
 -- ─── _rebuild ─────────────────────────────────────────────────────────────────
 
+local _DEFAULT_CHIPS_DISABLED = {
+    latest = true, authors = true, genres = true, tags = true,
+}
+local function _resolveDisabledSet()
+    return G_reader_settings:readSetting("bookshelf_chips_disabled")
+           or _DEFAULT_CHIPS_DISABLED
+end
+
 function BookshelfWidget:_rebuild()
     local _perf_t0   = _gettime()
     local _perf_chip = self.chip
@@ -335,20 +343,7 @@ function BookshelfWidget:_rebuild()
         "all", "recent", "latest", "series", "authors", "genres",
         "tags", "favorites",
     }
-    -- Default-disabled set for new installs: leaves Home / Recent / Series
-    -- / Favourites visible, hides Latest / Authors / Genres / Tags. Most
-    -- users will want a small, focused chip strip; advanced taxonomy chips
-    -- are opt-in via the settings menu. Existing users with an explicit
-    -- bookshelf_chips_disabled setting are unaffected — only nil falls
-    -- through to this default.
-    local DEFAULT_CHIPS_DISABLED = {
-        latest  = true,
-        authors = true,
-        genres  = true,
-        tags    = true,
-    }
-    local disabled_set = G_reader_settings:readSetting("bookshelf_chips_disabled")
-                         or DEFAULT_CHIPS_DISABLED
+    local disabled_set = _resolveDisabledSet()
     local active_chips = {}
     -- "Currently reading" action chip at the LEFT edge: always visible so
     -- it serves as a stable anchor and a perma-affordance. Renders in the
@@ -1015,7 +1010,7 @@ function BookshelfWidget:_fetchChipItems(n)
     local tip = self._drilldown_path[#self._drilldown_path]
     -- Search mode: emit ordered tiles (folders -> authors -> series -> genres -> books).
     if tip and tip.kind == "search" then
-        local ds = G_reader_settings:readSetting("bookshelf_chips_disabled") or {}
+        local ds = _resolveDisabledSet()
         local fresh = {}
         if not ds["all"] then
             for _, f in ipairs(tip.payload.folders or {}) do
@@ -1985,7 +1980,7 @@ function BookshelfWidget:_openBookMenu(item)
     -- Build optional navigation rows (author / series / genres).
     -- Each item is only included if the book has the field AND the
     -- corresponding chip is not disabled.
-    local ds = G_reader_settings:readSetting("bookshelf_chips_disabled") or {}
+    local ds = _resolveDisabledSet()
     local nav_rows = {}
     -- Go to Author
     if book.author and book.author ~= "" and not ds["authors"] then
