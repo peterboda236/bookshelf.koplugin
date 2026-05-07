@@ -337,6 +337,10 @@ function Bookshelf:addToMainMenu(menu_items)
         text           = _("Advanced settings"),
         sub_item_table = {
             {
+                text     = _("Scan all library metadata"),
+                callback = function() outer:scanAllMetadata() end,
+            },
+            {
                 text     = _('"Latest" walk depth'),
                 callback = function() S:_pickLatestDepth() end,
             },
@@ -658,6 +662,26 @@ function Bookshelf:editGitHubToken(touchmenu_instance)
     }
     UIManager:show(dlg)
     dlg:onShowKeyboard()
+end
+
+-- Trigger a full BIM metadata scan of the library directory. Uses
+-- extractBooksInDirectory which provides interactive progress dialogs and
+-- handles recursive/refresh/prune choices. After completion, invalidates
+-- Repo's caches so the next Bookshelf open picks up the fresh data.
+function Bookshelf:scanAllMetadata()
+    local ok, BIM = pcall(require, "bookinfomanager")
+    if not ok or not BIM or type(BIM.extractBooksInDirectory) ~= "function" then
+        local InfoMessage = require("ui/widget/infomessage")
+        UIManager:show(InfoMessage:new{
+            text    = _("Book metadata scanner not available.\nInstall the CoverBrowser plugin to enable it."),
+            timeout = 4,
+        })
+        return
+    end
+    local home = G_reader_settings:readSetting("home_dir") or "/"
+    BIM:extractBooksInDirectory(home, nil)
+    local Repo = require("book_repository")
+    Repo.invalidateWalkCache()
 end
 
 -- Clear dev branch + install latest stable release. Used when escaping a

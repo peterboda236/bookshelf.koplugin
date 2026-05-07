@@ -559,7 +559,7 @@ function Settings:_updateSubItems()
             callback = function() if plugin then plugin:checkForUpdates() end end,
         },
         {
-            text = _("Advanced"),
+            text = _("Developer updates"),
             sub_item_table = {
                 {
                     text_func = function()
