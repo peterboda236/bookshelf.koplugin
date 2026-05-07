@@ -153,6 +153,26 @@ local function cleanDescription(raw)
     -- newlines = one blank line between paragraphs, which is what we
     -- want.
     text = text:gsub("\n\n\n+", "\n\n")
+    -- Drop empty/whitespace-only paragraphs. Publishers commonly emit
+    -- <p>&nbsp;</p> (or <p>&#xa0;</p>) as a vertical spacer between
+    -- real paragraphs. After </p> → \n\n + tag-strip + entity-decode,
+    -- those land here as " \xC2\xA0" sandwiched between \n\n delimiters
+    -- — the hero card's per-paragraph splitter would then render the
+    -- nbsp as its own paragraph (full line of whitespace) on top of the
+    -- intended paragraph gap. Filter them out so we get exactly one
+    -- paragraph break between content paragraphs.
+    do
+        local kept = {}
+        for para in (text .. "\n\n"):gmatch("(.-)\n\n") do
+            -- nbsp (U+00A0 = 0xC2 0xA0 in UTF-8) isn't %s in Lua patterns;
+            -- coerce to a regular space before the whitespace strip.
+            local stripped = para:gsub("\xC2\xA0", " "):gsub("%s+", "")
+            if stripped ~= "" then
+                kept[#kept + 1] = para
+            end
+        end
+        text = table.concat(kept, "\n\n")
+    end
     -- Trim leading/trailing whitespace + newlines.
     return (text:gsub("^%s+", ""):gsub("%s+$", ""))
 end

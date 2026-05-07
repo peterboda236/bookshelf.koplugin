@@ -288,6 +288,17 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
     if not regions.description.disabled then
         desc_text = Tokens.expand(regions.description.template, book, state)
         desc_text = desc_text:gsub("%[/?[biu]%]", "")
+        -- Normalize line endings, then clamp any run of newlines mixed
+        -- with whitespace-only lines down to a clean \n\n paragraph break.
+        -- EPUB descriptions sometimes emit \n \n or \n\t\n (a "blank" line
+        -- that's actually whitespace), which our paragraph splitter would
+        -- otherwise miss — and the whitespace-only line then renders at
+        -- a full 1.3× line height inside a single TextBoxWidget,
+        -- defeating the per-paragraph spacing below. \n stays as a soft
+        -- line break; \n\n marks a paragraph (its own TextBoxWidget).
+        desc_text = desc_text:gsub("\r\n", "\n")
+        desc_text = desc_text:gsub("\n%s*\n", "\n\n")
+        desc_text = desc_text:match("^%s*(.-)%s*$") or desc_text
     end
     if not Tokens.isEmpty(desc_text) then
         right_top[#right_top + 1] = VerticalSpan:new{ width = Size.padding.default }
@@ -300,20 +311,57 @@ function HeroCard:_buildRightColumn(book, regions, state, dimen)
         local breath   = Size.padding.default
         local available = cover_h - top_used - bottom_h - breath
         if available > Screen:scaleBySize(40) then
-            right_top[#right_top + 1] = TextBoxWidget:new{
-                text                          = desc_text,
-                face                          = regionFace(regions.description),
-                bold                          = regions.description.bold or false,
-                width                         = right_w,
-                height                        = available,
-                alignment                     = regions.description.alignment or "left",
-                height_overflow_show_ellipsis = true,
-                -- 1.3× line height. KOReader's TextBoxWidget computes
-                -- line_height_px = (1 + line_height) * face.size, so 0.3
-                -- = 1.3× — the existing class default, but pinned here
-                -- explicitly so it can't drift if the default ever shifts.
-                line_height = 0.3,
-            }
+            local desc_face  = regionFace(regions.description)
+            local desc_bold  = regions.description.bold or false
+            local desc_align = regions.description.alignment or "left"
+            -- ~40% of body font size — enough to mark a paragraph onset
+            -- without eating a full empty line (which would be 1.3× the
+            -- font size and cost too much of the limited slot).
+            local para_gap = math.floor(desc_face.size * 0.4)
+
+            -- Split on \n\n (paragraph breaks). \n inside a paragraph
+            -- stays as a soft line break inside that paragraph's TextBox.
+            local paragraphs = {}
+            for para in (desc_text .. "\n\n"):gmatch("(.-)\n\n") do
+                if para ~= "" then paragraphs[#paragraphs + 1] = para end
+            end
+
+            local desc_group = VerticalGroup:new{ align = "left" }
+            local total_h = 0
+            for i, ptext in ipairs(paragraphs) do
+                local gap = (i > 1) and para_gap or 0
+                if total_h + gap >= available then break end
+                local rem = available - total_h - gap
+                if rem < desc_face.size then break end
+                if gap > 0 then
+                    desc_group[#desc_group + 1] =
+                        VerticalSpan:new{ width = gap }
+                    total_h = total_h + gap
+                end
+                local pwid = TextBoxWidget:new{
+                    text                          = ptext,
+                    face                          = desc_face,
+                    bold                          = desc_bold,
+                    width                         = right_w,
+                    height                        = rem,
+                    alignment                     = desc_align,
+                    height_overflow_show_ellipsis = true,
+                    -- height_adjust shrinks the widget to the natural
+                    -- text_height when the content is shorter than the
+                    -- height cap, so subsequent paragraphs aren't pushed
+                    -- below an empty reservation.
+                    height_adjust                 = true,
+                    -- 1.3× line height. line_height_px = (1+line_height)
+                    -- * face.size; pinned here so it can't drift if the
+                    -- TextBoxWidget default ever shifts.
+                    line_height                   = 0.3,
+                }
+                desc_group[#desc_group + 1] = pwid
+                total_h = total_h + pwid:getSize().h
+            end
+            if #desc_group > 0 then
+                right_top[#right_top + 1] = desc_group
+            end
         end
     end
 
