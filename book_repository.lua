@@ -1215,7 +1215,8 @@ local function _buildGroups(group_kind, key_fn, multi)
     end
     local list = {}
     for _, k in ipairs(order) do list[#list + 1] = groups[k] end
-    table.sort(list, function(a, b) return a.latest > b.latest end)
+    -- Insertion order; getAuthors/getGenres/getTags sort at hydrate time
+    -- via _groupShapeCmp on the cached shapes.
     for _, g in ipairs(list) do
         g._seen = nil
         table.sort(g.books, function(a, b)
@@ -1263,15 +1264,19 @@ function Repo.getAuthors(limit, offset)
     -- and the resulting shared cover_bb segfaults when one SeriesStack
     -- frees it while another still holds the reference. Hydrating from
     -- shapes calls buildBookMeta per group → independent cover_bbs.
-    local total = #cached.groups
+    local sk = Repo.getSortKey("authors")
+    local sorted = {}
+    for _, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+    table.sort(sorted, _groupShapeCmp(sk))
+    local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do
-        out[#out + 1] = _hydrateGroupShape(cached.groups[i])
+        out[#out + 1] = _hydrateGroupShape(sorted[i])
     end
-    logger.dbg(string.format("[bookshelf perf] getAuthors: %s %.0fms groups=%d/%d",
-        _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total))
+    logger.dbg(string.format("[bookshelf perf] getAuthors: %s %.0fms groups=%d/%d sort=%s",
+        _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total, sk))
     return out, total
 end
 
@@ -1296,15 +1301,19 @@ function Repo.getGenres(limit, offset)
     -- groups; without fresh Book records per group both SeriesStacks
     -- share the same cover_bb and the first to free it segfaults the
     -- second. This was the cause of the genres-tab crash on first tap.
-    local total = #cached.groups
+    local sk = Repo.getSortKey("genres")
+    local sorted = {}
+    for _, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+    table.sort(sorted, _groupShapeCmp(sk))
+    local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do
-        out[#out + 1] = _hydrateGroupShape(cached.groups[i])
+        out[#out + 1] = _hydrateGroupShape(sorted[i])
     end
-    logger.dbg(string.format("[bookshelf perf] getGenres: %s %.0fms groups=%d/%d",
-        _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total))
+    logger.dbg(string.format("[bookshelf perf] getGenres: %s %.0fms groups=%d/%d sort=%s",
+        _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total, sk))
     return out, total
 end
 
