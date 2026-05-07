@@ -584,75 +584,24 @@ function Repo.findFirstBookIn(path, max_depth)
     return nil
 end
 
-local function _makeCollateSort(collate, rh_map)
-    local SORT_LAST = "\xEF\xBF\xBF"
-    if collate == "natural" then
-        local ok, sort_mod = pcall(require, "sort")
-        if ok and sort_mod and sort_mod.natsort_cmp then
-            local natsort = sort_mod.natsort_cmp()
-            return function(a, b) return natsort(a.name, b.name) end
-        end
-    elseif collate == "access" then
-        local rh = rh_map or {}
-        return function(a, b)
-            local ta = rh[a.fp] or a.attr.access or a.attr.modification or 0
-            local tb = rh[b.fp] or b.attr.access or b.attr.modification or 0
-            return ta > tb
-        end
-    elseif collate == "date" then
+-- Comparator for the All chip's entries. Operates on raw lfs entries
+-- (name/fp/attr/optional doc_props) before any cache shaping. Three keys
+-- match the per-chip sort menu: title (default), date_added, path.
+local function _makeAllSort(key)
+    if key == "date_added" then
         return function(a, b)
             return (a.attr.modification or 0) > (b.attr.modification or 0)
         end
-    elseif collate == "size" then
-        return function(a, b)
-            return (a.attr.size or 0) < (b.attr.size or 0)
-        end
-    elseif collate == "type" then
-        return function(a, b)
-            local ea = (a.name:match("%.([^.]+)$") or ""):lower()
-            local eb = (b.name:match("%.([^.]+)$") or ""):lower()
-            if ea ~= eb then return ea < eb end
-            return a.name:lower() < b.name:lower()
-        end
-    elseif collate == "title" then
-        return function(a, b)
-            local ta = (a.doc_props and a.doc_props.display_title or a.name):lower()
-            local tb = (b.doc_props and b.doc_props.display_title or b.name):lower()
-            return ta < tb
-        end
-    elseif collate == "authors" then
-        return function(a, b)
-            local aa = (a.doc_props and a.doc_props.authors or SORT_LAST):lower()
-            local ab = (b.doc_props and b.doc_props.authors or SORT_LAST):lower()
-            if aa ~= ab then return aa < ab end
-            local ta = (a.doc_props and a.doc_props.display_title or a.name):lower()
-            local tb = (b.doc_props and b.doc_props.display_title or b.name):lower()
-            return ta < tb
-        end
-    elseif collate == "series" then
-        return function(a, b)
-            local sa = (a.doc_props and a.doc_props.series or SORT_LAST):lower()
-            local sb = (b.doc_props and b.doc_props.series or SORT_LAST):lower()
-            if sa ~= sb then return sa < sb end
-            local ia = a.doc_props and a.doc_props.series_index
-            local ib = b.doc_props and b.doc_props.series_index
-            if ia and ib then return ia < ib end
-            local ta = (a.doc_props and a.doc_props.display_title or a.name):lower()
-            local tb = (b.doc_props and b.doc_props.display_title or b.name):lower()
-            return ta < tb
-        end
-    elseif collate == "keywords" then
-        return function(a, b)
-            local ka = (a.doc_props and a.doc_props.keywords or SORT_LAST):lower()
-            local kb = (b.doc_props and b.doc_props.keywords or SORT_LAST):lower()
-            if ka ~= kb then return ka < kb end
-            local ta = (a.doc_props and a.doc_props.display_title or a.name):lower()
-            local tb = (b.doc_props and b.doc_props.display_title or b.name):lower()
-            return ta < tb
-        end
+    elseif key == "path" then
+        return function(a, b) return a.fp < b.fp end
     end
-    -- strcoll, percent_* → alphabetical by filename
-    return function(a, b) return a.name:lower() < b.name:lower() end
+    -- title (default): alphabetical by display title (BIM-enriched in caller),
+    -- falling back to filename.
+    return function(a, b)
+        local ta = (a.doc_props and a.doc_props.display_title) or a.name
+        local tb = (b.doc_props and b.doc_props.display_title) or b.name
+        return ta:lower() < tb:lower()
+    end
 end
 
 -- getAll(path, limit, offset) → (items, total)
@@ -663,8 +612,12 @@ function Repo.getAll(path, limit, offset)
     local _t0 = _gettime()
     offset = offset or 0
     path = path or G_reader_settings:readSetting("home_dir") or "/"
-    local collate   = G_reader_settings:readSetting("collate") or "strcoll"
-    local cache_key = path .. "\0" .. collate
+    local sort_key = Repo.getSortKey("all")
+    local reverse  = G_reader_settings:readSetting("bookshelf_sort_all_reverse") == true
+    local mixed    = G_reader_settings:readSetting("bookshelf_sort_all_mixed") == true
+    local cache_key = table.concat({
+        path, sort_key, reverse and "R" or "", mixed and "M" or "",
+    }, "\0")
     local now   = os.time()
     local entry = _all_cache[cache_key]
     if entry and entry.expires_at > now then
@@ -720,53 +673,47 @@ function Repo.getAll(path, limit, offset)
         end
     end
 
-    -- For metadata sorts, enrich each file entry with BIM fields before
-    -- sorting — BIM is already cached so this is fast for scanned libraries.
-    local SORT_LAST = "\xEF\xBF\xBF"  -- U+FFFF, sorts after all normal text
-    if collate == "title" or collate == "authors"
-            or collate == "series" or collate == "keywords" then
+    -- For the title sort, pre-fetch BIM display titles before sorting so
+    -- the comparator stays O(1) per pair.
+    if sort_key == "title" then
         local bim = getBookInfoMgr()
         for _, e in ipairs(entries) do
             if e.attr.mode == "file" then
-                local info   = bim:getBookInfo(e.fp, true) or {}
-                local s_name = info.series and info.series:gsub(" #%d+$", "")
-                e.doc_props  = {
-                    display_title = info.title or e.name,
-                    authors       = info.authors or SORT_LAST,
-                    series        = s_name or SORT_LAST,
-                    series_index  = info.series_index,
-                    keywords      = info.keywords or SORT_LAST,
-                }
+                local info = bim:getBookInfo(e.fp, true) or {}
+                e.doc_props = { display_title = info.title or e.name }
             else
-                e.doc_props = {
-                    display_title = e.name,
-                    authors       = SORT_LAST,
-                    series        = SORT_LAST,
-                    keywords      = SORT_LAST,
-                }
+                e.doc_props = { display_title = e.name }
             end
         end
     end
 
-    -- For access (last read date), build a ReadHistory map so books sort by
-    -- when KOReader opened them, not filesystem atime (unreliable on Kindle).
-    local rh_map
-    if collate == "access" then
-        local ok_rh, rh = pcall(getReadHistory)
-        if ok_rh and rh and rh.hist then
-            rh_map = {}
-            for _, e in ipairs(rh.hist) do
-                if e.file and e.time then rh_map[e.file] = e.time end
-            end
+    table.sort(entries, _makeAllSort(sort_key))
+    if reverse then
+        local n = #entries
+        for i = 1, math.floor(n / 2) do
+            entries[i], entries[n - i + 1] = entries[n - i + 1], entries[i]
         end
     end
-
-    table.sort(entries, _makeCollateSort(collate, rh_map))
 
     -- MISS: build the full list, cache all shapes, return just the slice.
+    -- When mixed=false, partition so all folders precede all files (each
+    -- partition keeps its sort order from the entries pass).
+    local ordered_entries = entries
+    if not mixed then
+        local folders, files = {}, {}
+        for _, e in ipairs(entries) do
+            if e.attr.mode == "directory" then folders[#folders + 1] = e
+            elseif e.attr.mode == "file" then  files[#files + 1] = e
+            end
+        end
+        ordered_entries = {}
+        for _, e in ipairs(folders) do ordered_entries[#ordered_entries + 1] = e end
+        for _, e in ipairs(files)   do ordered_entries[#ordered_entries + 1] = e end
+    end
+
     local all_out = {}
     local shapes  = {}
-    for _, e in ipairs(entries) do
+    for _, e in ipairs(ordered_entries) do
         if e.attr.mode == "file" then
             local ext = e.name:match("%.([^.]+)$")
             if ext and SUPPORTED_EXT[ext:lower()] then
@@ -797,8 +744,9 @@ function Repo.getAll(path, limit, offset)
     local out  = {}
     local stop = limit and math.min(offset + limit, total) or total
     for i = offset + 1, stop do out[#out + 1] = all_out[i] end
-    logger.dbg(string.format("[bookshelf perf] getAll: MISS build=%.0fms items=%d/%d",
-        (_gettime() - _t0) * 1000, #out, total))
+    logger.dbg(string.format("[bookshelf perf] getAll: MISS build=%.0fms items=%d/%d sort=%s rev=%s mixed=%s",
+        (_gettime() - _t0) * 1000, #out, total, sort_key,
+        tostring(reverse), tostring(mixed)))
     return out, total
 end
 
