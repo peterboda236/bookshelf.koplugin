@@ -974,6 +974,27 @@ end
 -- of a series"). Caching the shape (filepath list + sort metadata) and
 -- rebuilding Books on read keeps the cover_bb lifetime safe while still
 -- skipping the lfs walk + the sort/group pass.
+-- Comparator for series/author/genre/tag group records. Works on either a
+-- cached SHAPE (with .filepaths) or a freshly-built group (with .books) —
+-- so the same comparator can sort _series_cache entries at HIT time and
+-- in-memory groups at MISS time without a second helper.
+local function _groupShapeCmp(key)
+    if key == "name" then
+        return function(a, b)
+            return (a.series_name or ""):lower() < (b.series_name or ""):lower()
+        end
+    elseif key == "book_count" then
+        return function(a, b)
+            local na = a.filepaths and #a.filepaths or (a.books and #a.books or 0)
+            local nb = b.filepaths and #b.filepaths or (b.books and #b.books or 0)
+            if na ~= nb then return na > nb end
+            return (a.series_name or ""):lower() < (b.series_name or ""):lower()
+        end
+    end
+    -- latest_read (default): most recent first.
+    return function(a, b) return (a.latest or 0) > (b.latest or 0) end
+end
+
 local function hydrateSeriesShape(shape)
     local books = {}
     for i, fp in ipairs(shape.filepaths) do
@@ -1001,20 +1022,26 @@ function Repo.getSeriesGroups(limit, offset)
     local key   = (home or "/") .. ":" .. tostring(depth or 0)
     local now   = os.time()
 
-    -- Cache fast path: filepaths + sort metadata are stable across
-    -- renders; Books get rehydrated each read so cover_bbs are fresh.
+    -- Cache fast path: filepaths + sort metadata are stable across renders;
+    -- Books get rehydrated each read so cover_bbs are fresh. Sort runs at
+    -- hydrate time so changing bookshelf_sort_series doesn't invalidate the
+    -- cache.
     local cached = _series_cache[key]
     if cached and cached.expires_at > now then
         local _t0   = _gettime()
-        local total = #cached.groups
+        local sk    = Repo.getSortKey("series")
+        local sorted = {}
+        for _, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+        table.sort(sorted, _groupShapeCmp(sk))
+        local total = #sorted
         local out   = {}
         offset      = offset or 0
         local stop  = math.min(offset + (limit or 8), total)
         for i = offset + 1, stop do
-            out[#out + 1] = hydrateSeriesShape(cached.groups[i])
+            out[#out + 1] = hydrateSeriesShape(sorted[i])
         end
-        logger.dbg(string.format("[bookshelf perf] getSeriesGroups: HIT hydrate=%.0fms groups=%d/%d",
-            (_gettime() - _t0) * 1000, #out, total))
+        logger.dbg(string.format("[bookshelf perf] getSeriesGroups: HIT hydrate=%.0fms groups=%d/%d sort=%s",
+            (_gettime() - _t0) * 1000, #out, total, sk))
         return out, total
     end
 
@@ -1057,10 +1084,11 @@ function Repo.getSeriesGroups(limit, offset)
             end
         end
     end
-    -- Flatten to list and sort by most recent activity.
+    -- Flatten to list. Sort runs at hydrate time on the cached shapes (see
+    -- HIT branch / MISS hydrate below), so a sort menu change re-renders
+    -- without a re-walk.
     local list = {}
     for _, k in ipairs(order) do list[#list + 1] = groups[k] end
-    table.sort(list, function(a, b) return a.latest > b.latest end)
     -- Within each group, sort books by series_num ascending. Also remove _seen helper.
     for _, g in ipairs(list) do
         g._seen = nil
@@ -1084,13 +1112,19 @@ function Repo.getSeriesGroups(limit, offset)
     end
     _series_cache[key] = { groups = shapes, expires_at = now + SERIES_CACHE_TTL }
 
+    -- MISS path returns full Book records (already in memory from the build
+    -- pass) directly, sorted per the active key. Subsequent HITs sort the
+    -- cached shapes and rehydrate Books.
+    local sk = Repo.getSortKey("series")
+    table.sort(list, _groupShapeCmp(sk))
+
     local total = #list
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do out[#out + 1] = list[i] end
-    logger.dbg(string.format("[bookshelf perf] getSeriesGroups: MISS build=%.0fms cands=%d groups=%d/%d",
-        (_gettime() - _t0) * 1000, #candidates, #out, total))
+    logger.dbg(string.format("[bookshelf perf] getSeriesGroups: MISS build=%.0fms cands=%d groups=%d/%d sort=%s",
+        (_gettime() - _t0) * 1000, #candidates, #out, total, sk))
     return out, total
 end
 

@@ -566,6 +566,35 @@ test("getSortKey: returns nil for unknown chip", function()
     assert(Repo.getSortKey("nonexistent") == nil)
 end)
 
+test("getSeriesGroups: respects bookshelf_sort_series=book_count", function()
+    Repo.invalidateWalkCache()
+    Repo.invalidateSeriesCache()
+    package.loaded["libs/libkoreader-lfs"].dir = function(path)
+        local files = (path == "/lib") and {".", "..",
+            "small1.epub", "big1.epub", "big2.epub", "big3.epub"} or {".", ".."}
+        local i = 0; return function() i = i+1; return files[i] end
+    end
+    package.loaded["libs/libkoreader-lfs"].attributes = function(fp, key)
+        if key == "mode" then return "file" end
+        return 0
+    end
+    _G._test_bim_data = {
+        ["/lib/small1.epub"] = { title = "S1", series = "Smaller #1" },
+        ["/lib/big1.epub"]   = { title = "B1", series = "Bigger #1" },
+        ["/lib/big2.epub"]   = { title = "B2", series = "Bigger #2" },
+        ["/lib/big3.epub"]   = { title = "B3", series = "Bigger #3" },
+    }
+    _G._test_settings = {
+        home_dir = "/lib",
+        bookshelf_latest_walk_depth = 1,
+        bookshelf_sort_series = "book_count",
+    }
+    local out, total = Repo.getSeriesGroups(8)
+    assert(total == 2, "expected 2 series groups, got " .. tostring(total))
+    assert(out[1].series_name == "Bigger", "expected Bigger first (3 books), got " .. tostring(out[1].series_name))
+    assert(out[2].series_name == "Smaller", "expected Smaller second (1 book), got " .. tostring(out[2].series_name))
+end)
+
 test("getLatest: respects bookshelf_sort_latest=title", function()
     Repo.invalidateWalkCache()
     package.loaded["libs/libkoreader-lfs"].dir = function(path)
