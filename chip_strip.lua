@@ -364,6 +364,7 @@ function ChipStrip:_initChips()
             cell_content = TextWidget:new{
                 text    = chip.nerd_glyph,
                 face    = Font:getFace("infofont", 18),
+                fgcolor = Blitbuffer.COLOR_BLACK,
             }
         elseif chip.icon then
             local IconWidget = require("ui/widget/iconwidget")
