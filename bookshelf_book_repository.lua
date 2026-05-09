@@ -361,14 +361,19 @@ end
 -- 2000 books at ~60 KB each that peaks at ~120 MB and OOM-kills KOReader.
 -- LuaJIT does not track FFI-allocated C memory for GC pressure, so the
 -- collector doesn't know to step more aggressively.
--- This function intentionally omits cover_bb so the bim:getBookInfo()
--- info table goes out of scope when the function returns, making each
--- cover collectible after a single loop iteration instead of at the end
--- of the entire walk.
+-- This function passes get_cover=false to bim:getBookInfo so BIM skips the
+-- zstd decompression + Blitbuffer allocation entirely (see bookinfomanager
+-- line 376-379). The original implementation passed true and merely let
+-- the bb fall out of scope after the function returned — but the bb was
+-- still allocated in C memory for the duration of the loop iteration, and
+-- on a Kindle Color with a couple of larger covers in the queue the
+-- calloc inside zstd_uncompress_ctx fails outright (zstd.lua:75 assert,
+-- reported in issue #3 after the rename landed and the trace was finally
+-- visible). Passing false sidesteps the allocation entirely.
 local function _buildBookMetaLight(fp)
     if not fp then return nil end
     local bim  = getBookInfoMgr()
-    local info = bim:getBookInfo(fp, true) or {}
+    local info = bim:getBookInfo(fp, false) or {}
     local cb   = _calibreMetadataFor(fp)
 
     local series_name, series_num
