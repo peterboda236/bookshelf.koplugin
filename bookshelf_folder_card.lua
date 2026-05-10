@@ -42,23 +42,34 @@ local Screen         = require("device").screen
 --   5. Invert target: inv-CARDBOARD→CARDBOARD (bg), 0xFF→0x00 (black text).
 --
 -- No Lua pixel loops; works on both greyscale and colour targets.
-local CardboardTextBox = TextBoxWidget:extend{}
+local CardboardTextBox = TextBoxWidget:extend{
+    -- appearance.koplugin's _renderText patch injects its theme bgcolor unless
+    -- self.alpha is truthy (its own escape hatch). _bb must stay white for the
+    -- invert/addblitFrom/invert composite to produce the correct CARDBOARD bg.
+    -- alpha does not affect _bb format or blitting on this KOReader build
+    -- (bbtype is derived from Screen.isColorEnabled, not self.alpha).
+    alpha = true,
+}
 function CardboardTextBox:paintTo(bb, x, y)
     if not self._bb then
+        -- Call parent to initialise _bb. It also blits _bb directly to bb,
+        -- but that blit is immediately overwritten by our composite below.
         TextBoxWidget.paintTo(self, bb, x, y)
-        return
+        if not self._bb then return end
     end
     local w = self._bb:getWidth()
     local h = self._bb:getHeight()
-    -- addblitFrom on this KOReader build takes an explicit intensity
-    -- parameter (0.0–1.0); omitting it leaves intensity=nil and crashes
-    -- at `intensity * 0xFF`. Pass 1.0 for full-strength saturating add.
+    -- Use colorblitFrom (treats source as an alpha mask) to paint black
+    -- text over a CARDBOARD-filled rect. Earlier we tried addblitFrom +
+    -- invert tricks: addblitFrom is alpha-blend (not saturating-add), so
+    -- intensity=1.0 just replaced the destination — producing white bg.
+    -- After invertRect _bb has text=255 (full alpha), bg=0 (zero alpha):
+    -- text pixels paint COLOR_BLACK, bg pixels leave CARDBOARD intact,
+    -- and anti-aliased edges blend cleanly between the two.
     bb:paintRectRGB32(x, y, w, h, CARDBOARD)
-    bb:invertRect(x, y, w, h)
     self._bb:invertRect(0, 0, w, h)
-    bb:addblitFrom(self._bb, x, y, 0, 0, w, h, 1.0)
+    bb:colorblitFrom(self._bb, x, y, 0, 0, w, h, Blitbuffer.COLOR_BLACK)
     self._bb:invertRect(0, 0, w, h)
-    bb:invertRect(x, y, w, h)
 end
 
 local FolderCard = {}
