@@ -257,6 +257,30 @@ function Bookshelf:_isShowing()
     return UIManager:isWidgetShown(_live_widget)
 end
 
+-- Hide the touchmenu while a modal dialog is shown on top; returns a
+-- callback that restores the menu (re-shows it and refreshes items).
+-- Mirrors bookends' DialogHelpers.hideParentMenu so a ported widget that
+-- expects bookshelf:hideMenu(touchmenu_instance) works unchanged.
+function Bookshelf:hideMenu(touchmenu_instance)
+    if not touchmenu_instance then
+        return function() end
+    end
+    local menu_container = touchmenu_instance.show_parent
+        or touchmenu_instance.menu_container
+        or touchmenu_instance
+    if menu_container and UIManager and UIManager.close then
+        UIManager:close(menu_container)
+    end
+    return function()
+        if menu_container and UIManager and UIManager.show then
+            UIManager:show(menu_container)
+        end
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+end
+
 function Bookshelf:addToMainMenu(menu_items)
     -- Skip reader context entirely: bookshelf is a home-screen plugin and has
     -- nothing useful to add to the reader menu. is_doc_only=false is required
