@@ -110,8 +110,11 @@ end
 -- Widget: GlyphWidget (status indicator)
 -- ---------------------------------------------------------------------------
 
-local TextWidget = require("ui/widget/textwidget")
-local Font       = require("ui/font")
+local TextWidget      = require("ui/widget/textwidget")
+local Font            = require("ui/font")
+local Blitbuffer      = require("ffi/blitbuffer")
+local OverlapGroup    = require("ui/widget/overlapgroup")
+local CenterContainer = require("ui/widget/container/centercontainer")
 
 -- Build a single-glyph TextWidget for the in-progress / finished badges.
 -- @param glyph_char  one of GLYPH_BOOKMARK / GLYPH_BOOKMARK_CHECK
@@ -123,6 +126,40 @@ function M.buildGlyphWidget(glyph_char, size, colour)
         text    = glyph_char,
         face    = Font:getFace("symbols", size),
         fgcolor = colour,
+    }
+end
+
+-- BadgeBackdrop: solid white rounded rectangle painted behind a glyph
+-- so hollow nerd-font shapes (like the bookmark-check, where the tick
+-- is transparent) read cleanly against busy cover artwork.
+local BadgeBackdrop = Widget:extend{
+    width  = 0,
+    height = 0,
+    radius = 0,
+}
+function BadgeBackdrop:init()
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+function BadgeBackdrop:paintTo(bb, x, y)
+    bb:paintRoundedRect(x, y, self.width, self.height,
+                        Blitbuffer.COLOR_WHITE, self.radius)
+end
+
+-- Build a badged glyph: glyph centred on a white rounded backdrop.
+-- Used for the 'completed' indicator. Returns a widget whose getSize
+-- is the badge (slightly larger than the glyph).
+function M.buildBadgedGlyphWidget(glyph_char, size, colour)
+    local pad     = math.floor(size * 0.15 + 0.5)
+    local badge_w = size + 2 * pad
+    local badge_h = size + 2 * pad
+    local radius  = math.floor(badge_w * 0.2 + 0.5)
+    return OverlapGroup:new{
+        dimen = Geom:new{ w = badge_w, h = badge_h },
+        BadgeBackdrop:new{ width = badge_w, height = badge_h, radius = radius },
+        CenterContainer:new{
+            dimen = Geom:new{ w = badge_w, h = badge_h },
+            M.buildGlyphWidget(glyph_char, size, colour),
+        },
     }
 end
 

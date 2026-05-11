@@ -45,9 +45,16 @@ end
 
 package.preload["ffi/blitbuffer"] = function()
     return {
-        Color8     = function(n) return { _kind = "Color8", v = n } end,
-        ColorRGB32 = function(r,g,b,a) return { _kind = "ColorRGB32", r=r, g=g, b=b, a=a } end,
+        Color8       = function(n) return { _kind = "Color8", v = n } end,
+        ColorRGB32   = function(r,g,b,a) return { _kind = "ColorRGB32", r=r, g=g, b=b, a=a } end,
+        COLOR_WHITE  = { _kind = "Color8", v = 0xFF },
     }
+end
+package.preload["ui/widget/overlapgroup"] = function()
+    return { new = function(_, t) return t end }
+end
+package.preload["ui/widget/container/centercontainer"] = function()
+    return { new = function(_, t) return t end }
 end
 package.preload["device"] = function()
     return { screen = { isColorEnabled = function() return false end } }

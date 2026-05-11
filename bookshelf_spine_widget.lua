@@ -362,20 +362,22 @@ function SpineWidget:_renderShadowedCard(inner)
     -- 3. Inner card (image or fallback) at (0,0)
     children[#children + 1] = inner
 
-    -- 4. Finished glyph (IN FRONT of inner): top-left of interior, fully visible.
+    -- 4. Finished glyph (IN FRONT of inner): top-left of interior, on a
+    --    white rounded badge so the hollow check stays legible against
+    --    busy cover artwork.
     if indicators.glyph == "complete" then
         local colours = CoverProgress.resolvedColours()
         local glyph_h = _glyphSize(card_w)
         local glyph_w = self:_glyphWidth(glyph_h)
         if glyph_w <= card_w * 0.4 then
-            local glyph = CoverProgress.buildGlyphWidget(
+            local badge = CoverProgress.buildBadgedGlyphWidget(
                 CoverProgress.GLYPH_BOOKMARK_CHECK, glyph_h, colours.fill)
             children[#children + 1] = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
                 padding_top  = CARD_BORDER,
                 padding_left = CARD_BORDER + Size.padding.small,
-                glyph,
+                badge,
             }
         end
     end
