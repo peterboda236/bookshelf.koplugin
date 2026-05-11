@@ -42,28 +42,20 @@ local SHADOW_GRAY     = Blitbuffer.gray(0.5)        -- grey level for the shadow
 -- Scaled with cover width but floored so tiny columns don't render
 -- a glyph too small to read.
 local function _glyphSize(card_w)
-    local px = math.max(Screen:scaleBySize(14), math.floor(card_w * 0.22))
+    local px = math.max(Screen:scaleBySize(11), math.floor(card_w * 0.165))
     return px
 end
 
--- Fraction of the in-progress glyph that dangles below the card edge.
--- The complement (1 - DANGLE_FRACTION) is hidden behind the card.
-local GLYPH_DANGLE_FRACTION = 0.15
+-- Vertical placement of the in-progress glyph relative to the card.
+-- The glyph's top sits at (card_h - glyph_h * GLYPH_TOP_LIFT) so the
+-- entire glyph is INSIDE the cover (glyph bottom = card_h - 0.35*glyph_h).
+-- Was 0.85 (15% dangling below); user requested moving it 50% of the
+-- glyph height further up.
+local GLYPH_TOP_LIFT = 1.35
 
 -- Pixel thickness of the progress bar inside the card border.
 local function _barHeight()
     return Screen:scaleBySize(6)
-end
-
--- Extra vertical space required below the card so the in-progress glyph's
--- dangling tail fits within the slot's existing footprint
--- (slot_h - card_h = SHADOW_OFFSET when no extra). Returns the additional
--- height to subtract from card_h.
-local function _glyphDangleExtra(card_w)
-    local dangle = math.floor(_glyphSize(card_w) * GLYPH_DANGLE_FRACTION + 0.5)
-    local extra  = dangle - SHADOW_OFFSET
-    if extra < 0 then extra = 0 end
-    return extra
 end
 
 -- A simple Widget subclass that paints a rounded rectangle in a fixed grey.
@@ -346,9 +338,9 @@ function SpineWidget:_renderShadowedCard(inner)
         }
     end
 
-    -- 2. In-progress glyph (BEHIND inner): top portion under the card,
-    --    bottom (1 - GLYPH_DANGLE_FRACTION) of the glyph hidden, the rest
-    --    dangling below the card edge.
+    -- 2. In-progress glyph (IN FRONT of inner): anchored so its top is
+    --    GLYPH_TOP_LIFT * glyph_h above the card bottom (i.e. the entire
+    --    glyph sits inside the cover, bottom at card_h - 0.35*glyph_h).
     if indicators.glyph == "in_progress" then
         local colours = CoverProgress.resolvedColours()
         local glyph_h = _glyphSize(card_w)
@@ -356,8 +348,7 @@ function SpineWidget:_renderShadowedCard(inner)
         if glyph_w <= card_w * 0.4 then
             local glyph = CoverProgress.buildGlyphWidget(
                 CoverProgress.GLYPH_BOOKMARK, glyph_h, colours.fill)
-            local y_offset = card_h
-                - math.floor(glyph_h * (1 - GLYPH_DANGLE_FRACTION) + 0.5)
+            local y_offset = card_h - math.floor(glyph_h * GLYPH_TOP_LIFT + 0.5)
             children[#children + 1] = FrameContainer:new{
                 bordersize   = 0,
                 padding      = 0,
@@ -389,7 +380,7 @@ function SpineWidget:_renderShadowedCard(inner)
         end
     end
 
-    -- 5. Progress bar (IN FRONT, top-inside-border)
+    -- 5. Progress bar (IN FRONT, BOTTOM-inside-border)
     if indicators.bar then
         local colours = CoverProgress.resolvedColours()
         local bar_h = _barHeight()
@@ -399,7 +390,7 @@ function SpineWidget:_renderShadowedCard(inner)
         children[#children + 1] = FrameContainer:new{
             bordersize   = 0,
             padding      = 0,
-            padding_top  = CARD_BORDER,
+            padding_top  = card_h - CARD_BORDER - bar_h,
             padding_left = CARD_BORDER,
             bar,
         }
@@ -423,15 +414,9 @@ end
 -- sizing their inner card widget so the card doesn't overlap the
 -- dangle zone that _renderShadowedCard reserves on the bottom edge.
 function SpineWidget:_cardDimensions()
-    local card_w = self.width  - SHADOW_OFFSET
-    local card_h = self.height - SHADOW_OFFSET
-    if self.show_progress then
-        local indicators = CoverProgress.decide(self.book)
-        if indicators.glyph == "in_progress" then
-            card_h = card_h - _glyphDangleExtra(card_w)
-        end
-    end
-    return card_w, card_h
+    -- Glyph is now fully INSIDE the card (no dangle), so no extra
+    -- bottom-margin reservation needed.
+    return self.width - SHADOW_OFFSET, self.height - SHADOW_OFFSET
 end
 
 function SpineWidget:_renderCover(bb)
@@ -444,17 +429,17 @@ function SpineWidget:_renderCover(bb)
     local img_w = card_w - 2 * border
     local img_h = card_h - 2 * border
 
-    -- When the bar will be drawn on top of the card, shorten the image
-    -- so its top edge isn't obscured. The shrink is bar_h + 1dp (a 1dp
-    -- gutter between bar and image). Shifting is handled by wrapping the
-    -- ImageWidget in a FrameContainer with extra top padding.
+    -- When the bar will be drawn at the BOTTOM of the card, shorten the
+    -- image so its bottom edge isn't obscured. The shrink is bar_h + 1dp
+    -- (a 1dp gutter between image and bar). Bottom-shifting via
+    -- FrameContainer padding_bottom keeps the image anchored to the top.
     local bar_h = 0
     if self.show_progress then
         local _i = CoverProgress.decide(self.book)
         if _i.bar then bar_h = _barHeight() end
     end
-    local img_top_inset = bar_h > 0 and (bar_h + Screen:scaleBySize(1)) or 0
-    img_h = img_h - img_top_inset
+    local img_bottom_inset = bar_h > 0 and (bar_h + Screen:scaleBySize(1)) or 0
+    img_h = img_h - img_bottom_inset
 
     local bb_w  = bb:getWidth()
     local bb_h  = bb:getHeight()
@@ -542,12 +527,12 @@ function SpineWidget:_renderCover(bb)
         cover_inner = ImageWidget:new(img_args)
     end
 
-    if img_top_inset > 0 then
+    if img_bottom_inset > 0 then
         cover_inner = FrameContainer:new{
-            bordersize   = 0,
-            padding      = 0,
-            padding_top  = img_top_inset,
-            padding_left = 0,
+            bordersize     = 0,
+            padding        = 0,
+            padding_bottom = img_bottom_inset,
+            padding_left   = 0,
             cover_inner,
         }
     end
