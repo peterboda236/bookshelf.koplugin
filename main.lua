@@ -39,6 +39,8 @@ local Bookshelf = WidgetContainer:extend{
     is_doc_only = false, -- must be false: hook fires in Reader context
 }
 
+require("bookshelf_colour_palette").attach(Bookshelf)
+
 -- Tracks the live BookshelfWidget singleton across plugin instances. Two
 -- Bookshelf instances exist — one attached to FM, one to Reader — but the
 -- widget itself is a single shared overlay. The tracker lets either
@@ -326,6 +328,15 @@ function Bookshelf:addToMainMenu(menu_items)
         sub_item_table_func = function()
             S._bw = _live_widget
             return S:_chipsSubItems()
+        end,
+    }
+
+    menu_items.bookshelf_progress_indicators = {
+        text                = _("Cover progress indicators"),
+        enabled_func        = function() return outer:_isShowing() end,
+        sub_item_table_func = function()
+            S._bw = _live_widget
+            return S:_progressIndicatorsSubItems()
         end,
     }
 
