@@ -43,4 +43,50 @@ function M.decide(book)
     return none
 end
 
+-- ---------------------------------------------------------------------------
+-- Widget: ProgressBarWidget
+-- ---------------------------------------------------------------------------
+
+local Widget = require("ui/widget/widget")
+local Geom   = require("ui/geometry")
+
+local ProgressBarWidget = Widget:extend{
+    width  = 0,
+    height = 0,
+    pct    = 0,        -- 0..1
+    fill   = nil,      -- Blitbuffer colour
+    track  = nil,      -- Blitbuffer colour
+}
+
+function ProgressBarWidget:init()
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function ProgressBarWidget:paintTo(bb, x, y)
+    local clamped = self.pct
+    if clamped < 0 then clamped = 0 end
+    if clamped > 1 then clamped = 1 end
+    local fill_w  = math.floor(self.width * clamped + 0.5)
+    local track_w = self.width - fill_w
+    if fill_w > 0 then
+        bb:paintRect(x, y, fill_w, self.height, self.fill)
+    end
+    if track_w > 0 then
+        bb:paintRect(x + fill_w, y, track_w, self.height, self.track)
+    end
+end
+
+-- Build a ProgressBarWidget. `fill` and `track` are Blitbuffer colour
+-- objects (Color8 or ColorRGB32); callers resolve them via
+-- bookshelf_colour.parseColorValue before calling here.
+function M.buildBarWidget(width, height, pct, fill, track)
+    return ProgressBarWidget:new{
+        width  = width,
+        height = height,
+        pct    = pct,
+        fill   = fill,
+        track  = track,
+    }
+end
+
 return M

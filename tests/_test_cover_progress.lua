@@ -7,6 +7,36 @@
 
 package.path = "./?.lua;" .. package.path
 
+-- Stub KOReader widget base and Geom so the module-level requires in
+-- bookshelf_cover_progress.lua don't fail when run outside KOReader.
+local function make_widget_base()
+    local W = {}
+    W.__index = W
+    function W:extend(o)
+        o = o or {}
+        setmetatable(o, self)
+        self.__index = self
+        return o
+    end
+    function W:new(o)
+        o = o or {}
+        setmetatable(o, self)
+        self.__index = self
+        if self.init then self:init() end
+        return o
+    end
+    function W:init() end
+    return W
+end
+package.preload["ui/widget/widget"] = function() return make_widget_base() end
+package.preload["ui/geometry"] = function()
+    return {
+        new = function(_, t)
+            return setmetatable(t or {}, { __index = {} })
+        end,
+    }
+end
+
 -- Master toggle: stub G_reader_settings so the toggle can be set per test.
 local _settings = {}
 _G.G_reader_settings = {
