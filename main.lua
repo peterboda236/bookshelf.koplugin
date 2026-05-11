@@ -232,6 +232,7 @@ function Bookshelf:_extendMenuOrder()
         "bookshelf_toggle",
         "bookshelf_hero_card",
         "bookshelf_shelf_tabs",
+        "bookshelf_progress_indicators",
         "bookshelf_updates",
         "bookshelf_advanced",
         "bookshelf_about",
