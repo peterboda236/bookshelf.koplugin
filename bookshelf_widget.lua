@@ -813,6 +813,13 @@ function BookshelfWidget:_rebuild()
     -- Only count non-nil entries (the last page may be partial).
     local shown_count = 0
     for i = 1, VIEW_SIZE do if items[i] then shown_count = shown_count + 1 end end
+    self._page_items = items
+    if self._cursor_idx then
+        local last_real = 0
+        for i = #items, 1, -1 do if items[i] then last_real = i; break end end
+        local clamp_to = last_real > 0 and last_real or 1
+        if self._cursor_idx > clamp_to then self._cursor_idx = clamp_to end
+    end
 
     -- ── Empty-state placeholder (spec §8: "Selected chip yields zero books") ────
     -- When the active chip returns no items, replace both shelf rows with a
@@ -1605,9 +1612,19 @@ function BookshelfWidget:_buildShelfRows(items, content_w, shelf_h, PAD, n_rows)
     -- counterpart on screen — pass nil so nothing renders selected.
     -- _preview_book itself is preserved on self, so the highlight returns
     -- automatically when the user collapses back to 2-row.
-    local selected_filepath = (not self._expanded)
-        and self._preview_book and self._preview_book.filepath
-        or nil
+    local selected_filepath
+    if self._cursor_idx and self._page_items then
+        local ci = self._page_items[self._cursor_idx]
+        if ci then
+            if     ci.filepath              then selected_filepath = ci.filepath
+            elseif ci.first_book            then selected_filepath = ci.first_book.filepath
+            elseif ci.books and ci.books[1] then selected_filepath = ci.books[1].filepath
+            end
+        end
+    end
+    if not selected_filepath and not self._expanded and self._preview_book then
+        selected_filepath = self._preview_book.filepath
+    end
     -- on_book_tap branches on _expanded so a tap on a shelf book in
     -- expanded mode auto-restores the full hero AND stages the tapped
     -- book as the preview — single tap collapses-back-and-shows-it. In
@@ -2047,6 +2064,13 @@ function BookshelfWidget:_swapShelvesInPlace()
         for i = 0, PAGE_SIZE - 1 do items[i + 1] = all_items[start_idx + i] end
     end
 
+    self._page_items = items
+    if self._cursor_idx then
+        local last_real = 0
+        for i = #items, 1, -1 do if items[i] then last_real = i; break end end
+        local clamp_to = last_real > 0 and last_real or 1
+        if self._cursor_idx > clamp_to then self._cursor_idx = clamp_to end
+    end
     local rows = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.PAD, 2)
     local row_top, row_bottom = rows[1], rows[2]
     local _perf_t2 = _gettime()
