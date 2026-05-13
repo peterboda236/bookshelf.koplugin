@@ -37,6 +37,7 @@ local HeroCard = InputContainer:extend{
     device_state = nil,
     on_tap       = nil,
     on_hold      = nil,
+    is_selected  = false,
 }
 
 -- Reads the user's font-scale setting (% of nominal). Applied on top of
@@ -417,11 +418,12 @@ function HeroCard:_renderFull()
     local cover_h = self.cover_h or self.height
 
     local cover = SpineWidget:new{
-        book   = self.book,
-        width  = self.cover_w,
-        height = cover_h,
-        on_tap = self.on_tap,
-        on_hold = self.on_hold,
+        book        = self.book,
+        width       = self.cover_w,
+        height      = cover_h,
+        on_tap      = self.on_tap,
+        on_hold     = self.on_hold,
+        is_selected = self.is_selected,
     }
     local cover_widget = cover
 

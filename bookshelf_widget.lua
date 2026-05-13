@@ -1538,30 +1538,10 @@ function BookshelfWidget:_buildHero(content_w, hero_cover_w, hero_cover_h, hero_
         device_state = self:_buildDeviceState(),
         on_tap       = function(b) self:_openBook(b) end,
         on_hold      = function(b) self:_openBookMenu(b) end,
+        is_selected  = (self._focus_zone == "hero"),
     }
-    -- Keep a stable reference to the bare HeroCard so _swapHeroRightColumnInPlace
-    -- can reach replaceRightColumn regardless of whether a FocusRing wraps us.
     self._hero_card = card
-    if self._focus_zone ~= "hero" then return card end
-    local OverlapGroup = require("ui/widget/overlapgroup")
-    local Widget       = require("ui/widget/widget")
-    local BW           = Size.border.thick
-    local FocusRing    = Widget:extend{}
-    function FocusRing:init()
-        self.dimen = Geom:new{ w = content_w, h = hero_h }
-    end
-    function FocusRing:paintTo(bb, x, y)
-        local c = Blitbuffer.COLOR_BLACK
-        bb:paintRect(x,              y,             content_w, BW, c)
-        bb:paintRect(x,              y + hero_h-BW, content_w, BW, c)
-        bb:paintRect(x,              y,             BW, hero_h, c)
-        bb:paintRect(x + content_w-BW, y,           BW, hero_h, c)
-    end
-    return OverlapGroup:new{
-        dimen = Geom:new{ w = content_w, h = hero_h },
-        card,
-        FocusRing:new{},
-    }
+    return card
 end
 
 -- _buildExpandedStrip(content_w, strip_h, PAD) — the thin replacement for
@@ -2847,19 +2827,24 @@ function BookshelfWidget:onBSKbPress()
         local idx  = self._cursor_idx
         local item = idx and self._page_items and self._page_items[idx]
         if not item then return true end
-        self:_clearDpadFocus()
         if item.filepath then
-            self:_openBook(item)
-        elseif item.kind == "folder" then
-            self:_expandFolder(item)
-        elseif item.kind == "author" then
-            self:_expandAuthor(item)
-        elseif item.kind == "genre" then
-            self:_expandGenre(item)
-        elseif item.kind == "tag" then
-            self:_expandTag(item)
-        elseif item.books then
-            self:_expandSeries(item)
+            -- Preview on first press (updates hero); _previewBook opens on
+            -- second press when the same book is already the preview.
+            self:_previewBook(item)
+        else
+            -- Non-book items: drill in and clear focus (same as touch tap).
+            self:_clearDpadFocus()
+            if item.kind == "folder" then
+                self:_expandFolder(item)
+            elseif item.kind == "author" then
+                self:_expandAuthor(item)
+            elseif item.kind == "genre" then
+                self:_expandGenre(item)
+            elseif item.kind == "tag" then
+                self:_expandTag(item)
+            elseif item.books then
+                self:_expandSeries(item)
+            end
         end
         return true
     end
@@ -2867,19 +2852,18 @@ function BookshelfWidget:onBSKbPress()
     if self._focus_zone == "footer" then
         local btn   = self._footer_cursor_btn
         local total = self._total_pages or 1
-        local view_size = self:_nShelves() * self:_nCols()
         if btn == "next" and self.page < total then
-            self._footer_cursor_btn = nil
-            self._focus_zone        = "grid"
-            self._cursor_idx        = 1
-            self.page               = self.page + 1
+            self.page = self.page + 1
+            -- At last page "next" is exhausted; pivot focus to "prev".
+            if self.page >= total then self._footer_cursor_btn = "prev" end
             self:_swapShelvesInPlace()
+            self:_swapFooterInPlace()
         elseif btn == "prev" and self.page > 1 then
-            self._footer_cursor_btn = nil
-            self._focus_zone        = "grid"
-            self._cursor_idx        = view_size
-            self.page               = self.page - 1
+            self.page = self.page - 1
+            -- At first page "prev" is exhausted; pivot focus to "next".
+            if self.page <= 1 then self._footer_cursor_btn = "next" end
             self:_swapShelvesInPlace()
+            self:_swapFooterInPlace()
         end
         return true
     end
