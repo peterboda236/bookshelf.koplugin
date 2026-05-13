@@ -1707,6 +1707,7 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     local Button         = require("ui/widget/button")
     local HorizontalSpan = require("ui/widget/horizontalspan")
     local bw = self
+    local focused_btn = self._footer_cursor_btn   -- "prev", "next", or nil
     -- The footer is always pagination chevrons + page label, regardless
     -- of drill state. Earlier the footer doubled as a "← back to chips"
     -- label inside an expanded series, but that hijacked the only
@@ -1725,7 +1726,7 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     }
     local prev = Button:new{
         icon = "chevron.left",  icon_width = chev_size, icon_height = chev_size,
-        callback = go(self.page - 1), bordersize = 0,
+        callback = go(self.page - 1), bordersize = (focused_btn == "prev") and Size.border.thin or 0,
         enabled = self.page > 1, show_parent = self,
     }
     local page_text = Button:new{
@@ -1737,7 +1738,7 @@ function BookshelfWidget:_buildPaginationFooter(content_w, label_h, total_pages)
     self._page_text_button = page_text
     local next_btn = Button:new{
         icon = "chevron.right", icon_width = chev_size, icon_height = chev_size,
-        callback = go(self.page + 1), bordersize = 0,
+        callback = go(self.page + 1), bordersize = (focused_btn == "next") and Size.border.thin or 0,
         enabled = self.page < total_pages, show_parent = self,
     }
     local last = Button:new{
