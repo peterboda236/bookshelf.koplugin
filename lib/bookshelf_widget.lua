@@ -988,32 +988,63 @@ function BookshelfWidget:_rebuild()
     --   • "recent"     when ReadHistory is empty
     --   • "latest"     when home_dir is empty / yields no supported files
     if #items == 0 then
+        -- Resolve the chip's source kind so we can branch on it (not on
+        -- self.chip, which is a chip id -- custom chips have ids like
+        -- "custom_3" but their source.kind tells us what view they show).
+        -- Default built-in chips have id == source.kind, so the existing
+        -- chip-id checks below still hit; the source-kind path catches
+        -- custom chips that adopt a built-in source (e.g. user's chip
+        -- with source.kind = "all" or "library", i.e. home folders /
+        -- home flattened).
+        local TabModel = require("lib/bookshelf_tab_model")
+        local _tab = TabModel.getById(self.chip)
+        local _source_kind = (_tab and _tab.source and _tab.source.kind)
+                              or self.chip
+        local _is_home_source = _source_kind == "all" or _source_kind == "library"
+
+        -- Branch on _source_kind, NOT self.chip. Chip IDs stay sticky
+        -- after the user changes a chip's source via the editor (a chip
+        -- created as "genres" keeps id="genres" even when re-pointed at
+        -- "library"), so keying off self.chip lights the wrong empty
+        -- message ("No genres yet" on a home-flattened chip). Default
+        -- built-in chips have id == source.kind so this still serves
+        -- them correctly.
         local placeholder_text
         local _tip = self._drilldown_path[#self._drilldown_path]
         if _tip and _tip.kind == "search" then
             placeholder_text = string.format(
                 _("No matches for \"%s\""), _tip.payload.query or "")
-        elseif self.chip == "series" then
+        elseif _source_kind == "series" then
             placeholder_text = _("Nothing in Series yet · Add series metadata to your books and they will appear here")
-        elseif self.chip == "authors" then
+        elseif _source_kind == "authors" then
             placeholder_text = _("No authors yet · Add author metadata to your books and they will appear here")
-        elseif self.chip == "genres" then
+        elseif _source_kind == "genres" then
             placeholder_text = _("No genres yet · Add keywords or subject metadata to your books and they will appear here")
-        elseif self.chip == "tags" then
+        elseif _source_kind == "tags" then
             placeholder_text = _("No tags yet · Long-press a book and tap 'Add to collection' to create one")
-        elseif self.chip == "favorites" then
+        elseif _source_kind == "favorites" then
             placeholder_text = _("No favourites yet · Long-press a book and tap 'Add to favourites'")
-        elseif self.chip == "latest" then
+        elseif _source_kind == "latest" then
             placeholder_text = _("No books found · Set your library folder in Settings then tap Latest")
+        elseif _source_kind == "recent" then
+            placeholder_text = _("No recent reads yet · Open a book and it will appear here")
+        elseif _is_home_source then
+            -- "Home (folders)" (kind "all") + "Home (flattened)" (kind
+            -- "library") both depend on KOReader's home_dir being set.
+            -- The "Set home folder" button below drives KOReader's
+            -- path-chooser dialog directly.
+            placeholder_text = _("No books here yet \xC2\xB7 Pick a folder to use as your KOReader library and books in it will appear here.")
         else
-            -- Handle custom-source tabs (non-built-in kinds).
-            local TabModel = require("lib/bookshelf_tab_model")
-            local tab = TabModel.getById(self.chip)
-            local builtin_kinds = { all=1, recent=1, latest=1, series=1, authors=1, genres=1, tags=1, favorites=1 }
-            if tab and tab.source and tab.source.kind and not builtin_kinds[tab.source.kind] then
+            -- Source kinds without a bespoke message: formats / ratings,
+            -- "specific" group drill-ins (folder / collection / tag /
+            -- genre / author), or anything else not enumerated above.
+            local builtin_kinds = { all=1, library=1, recent=1, latest=1,
+                series=1, authors=1, genres=1, tags=1, formats=1,
+                ratings=1, favorites=1 }
+            if _source_kind and not builtin_kinds[_source_kind] then
                 placeholder_text = string.format(
                     _("No books in %s yet \xC2\xB7 Long-press the chip to edit its source or filter"),
-                    tab.label or self.chip)
+                    _tab and _tab.label or self.chip)
             else
                 placeholder_text = string.format(_("No books in %s yet"), self:_chipLabel())
             end
@@ -1025,20 +1056,111 @@ function BookshelfWidget:_rebuild()
         local paper_bg = Blitbuffer.COLOR_WHITE
         local card_bg  = Blitbuffer.gray(0.07)
 
+        -- Split the placeholder text into headline + sub on the bullet
+        -- marker. Most chip-specific messages already follow this shape
+        -- ("No favourites yet · Long-press a book and tap..."), so we
+        -- can render the parts with different weights. Strings without
+        -- a bullet render as headline only.
+        local headline_text, sub_text
+        local sep_start, sep_end = placeholder_text:find(" \xC2\xB7 ", 1, true)
+        if sep_start then
+            headline_text = placeholder_text:sub(1, sep_start - 1)
+            sub_text      = placeholder_text:sub(sep_end + 1)
+        else
+            headline_text = placeholder_text
+            sub_text      = nil
+        end
+
+        -- Card claims all available shelf-area height so the empty state
+        -- has visible presence -- the original card was a thin strip pinned
+        -- to the chip-strip bottom with the rest of the screen blank, which
+        -- read as broken UI rather than guidance. Account for outer
+        -- FrameContainer padding (PAD * 2), the hero + chip strip + their
+        -- gaps inside the vgroup, and an extra PAD margin around the card.
+        local VerticalSpan = require("ui/widget/verticalspan")
+        local card_h
+        if hide_chip_bar then
+            card_h = self.height - 3 * PAD - hero_h
+        else
+            card_h = self.height - 4 * PAD - hero_h - chip_h
+        end
+        -- Floor at a sensible minimum so an unusually tall hero doesn't
+        -- squash the card into nothing.
+        local min_card_h = Screen:scaleBySize(140)
+        if card_h < min_card_h then card_h = min_card_h end
+
+        local card_inner_w = content_w - Size.padding.large * 2
+
+        local card_children = { align = "center" }
+        -- bgcolor must match the card -- TextBoxWidget defaults to
+        -- COLOR_WHITE and paints its own background fill, which shows up
+        -- as a white block on the grey card if we don't override.
+        card_children[#card_children + 1] = TextBoxWidget:new{
+            text      = headline_text,
+            face      = Font:getFace("infofont", 22),
+            bold      = true,
+            bgcolor   = card_bg,
+            width     = card_inner_w,
+            alignment = "center",
+        }
+        if sub_text and sub_text ~= "" then
+            card_children[#card_children + 1] = VerticalSpan:new{
+                width = Size.padding.large,
+            }
+            card_children[#card_children + 1] = TextBoxWidget:new{
+                text      = sub_text,
+                face      = Font:getFace("infofont", 15),
+                bgcolor   = card_bg,
+                width     = card_inner_w,
+                alignment = "center",
+            }
+        end
+        if _is_home_source then
+            local Button = require("ui/widget/button")
+            card_children[#card_children + 1] = VerticalSpan:new{
+                width = Size.padding.fullscreen,
+            }
+            local bw = self
+            card_children[#card_children + 1] = Button:new{
+                text           = _("Set home folder"),
+                width          = math.floor(card_inner_w * 0.5),
+                text_font_size = 16,
+                callback       = function()
+                    local filemanagerutil =
+                        require("apps/filemanager/filemanagerutil")
+                    local current = G_reader_settings:readSetting("home_dir")
+                    local default = filemanagerutil.getDefaultDir()
+                    filemanagerutil.showChooseDialog(
+                        _("Current home folder:"),
+                        function(path)
+                            G_reader_settings:saveSetting("home_dir", path)
+                            if Repo.invalidateWalkCache then
+                                Repo.invalidateWalkCache()
+                            end
+                            bw:_rebuild()
+                            UIManager:setDirty(bw, "ui")
+                        end,
+                        current,
+                        default)
+                end,
+            }
+        end
+
         local placeholder = FrameContainer:new{
             bordersize = Size.border.thin,
             background = card_bg,
             padding    = Size.padding.large,
             width      = content_w,
-            TextBoxWidget:new{
-                text      = placeholder_text,
-                face      = Font:getFace("infofont", 12),
-                width     = content_w - Size.padding.large * 2,
-                alignment = "center",
+            height     = card_h,
+            CenterContainer:new{
+                dimen = Geom:new{
+                    w = card_inner_w,
+                    h = card_h - Size.padding.large * 2,
+                },
+                VerticalGroup:new(card_children),
             },
         }
 
-        local VerticalSpan = require("ui/widget/verticalspan")
         local empty_vgroup
         if hide_chip_bar then
             empty_vgroup = VerticalGroup:new{
