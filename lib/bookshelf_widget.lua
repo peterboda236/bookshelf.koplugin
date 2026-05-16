@@ -1694,11 +1694,25 @@ function BookshelfWidget:_fetchChipItems(n)
     -- collapsed, 12 expanded, etc) so a single fetch covers the page.
     local offset    = math.max(0, (self._cursor or 1) - 1)
     local LIMIT     = self:_viewSize()
+    local TabModel  = require("lib/bookshelf_tab_model")
+    local tab       = TabModel.getById(self.chip)
     if tip and tip.kind == "folder" then
-        return Repo.getAll(tip.payload.path, LIMIT, offset)
+        -- Drilldown inheritance: the chip's sort_priority levels 2+ drive
+        -- the order of books inside the drilled-into folder, mirroring how
+        -- _applyWithinGroupSort treats group-source drilldowns. Level 1 was
+        -- used at the parent view; levels 2+ apply within. Folder cards at
+        -- this level still sort by level-1 key (typically filename), since
+        -- SortEngine's filename comparator falls back to a.name for lfs
+        -- entries -- so passing the full sp also works. Match the group-
+        -- source convention and pass sp[2..#] for "within-folder" semantics.
+        local within
+        local sp = tab and tab.sort_priority
+        if sp and #sp >= 2 then
+            within = {}
+            for i = 2, #sp do within[#within + 1] = sp[i] end
+        end
+        return Repo.getAll(tip.payload.path, LIMIT, offset, within)
     end
-    local TabModel = require("lib/bookshelf_tab_model")
-    local tab      = TabModel.getById(self.chip)
     if tab then
         return Repo.getBySource(tab.source, tab.filter, tab.sort_priority, offset, LIMIT)
     end

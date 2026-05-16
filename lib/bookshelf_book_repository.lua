@@ -730,6 +730,12 @@ function Repo.invalidateWalkCache()
     _bySource_cache   = {}
     _light_meta_cache = {}
     _progress_cache   = {}
+    -- Force getBookInfoMgr to re-resolve via require on its next call. In
+    -- production this is a no-op cost (require's own cache returns the same
+    -- module instantly), but it lets tests that swap the bookinfomanager
+    -- stub between cases actually see the new stub -- previously the first
+    -- test's BIM was sticky for the whole suite.
+    _bim_cache = nil
 end
 
 function Repo.invalidateSeriesCache()
@@ -1237,11 +1243,19 @@ local function _makeAllSort(_sort_key)
     return SortEngine.chainedComparator(Repo.getSortPriority("all"))
 end
 
--- getAll(path, limit, offset) → (items, total)
+-- getAll(path, limit, offset, sort_priority) → (items, total)
 -- limit/offset let callers fetch a single page slice without hydrating the
 -- full list. total is always the full item count (from cache or fresh scan)
 -- so callers can compute total_pages without a second trip.
-function Repo.getAll(path, limit, offset)
+--
+-- sort_priority (optional) is an array of { key, reverse } levels handed in
+-- by callers that want their chip's sort to drive the order -- e.g. a
+-- Specific-folder chip with sort_priority = {filename, series_index, title}.
+-- When nil/empty, falls back to the "all" tab's stored sort_priority for
+-- backward compatibility (Home folders unchanged). The legacy reverse +
+-- mixed settings apply only on the fallback path; when sort_priority is
+-- provided, each level carries its own direction and reverse is redundant.
+function Repo.getAll(path, limit, offset, sort_priority)
     local _t0 = _gettime()
     offset = offset or 0
     -- Explicit `path` (folder drilldown) wins; fallback resolves the
@@ -1254,11 +1268,31 @@ function Repo.getAll(path, limit, offset)
             return {}, 0
         end
     end
-    local sort_key = Repo.getSortKey("all")
-    local reverse  = BookshelfSettings.read("sort_all_reverse") == true
-    local mixed    = BookshelfSettings.read("sort_all_mixed") == true
+    -- Effective priority: caller's wins; otherwise the "all" tab settings.
+    local has_caller_priority = sort_priority and #sort_priority > 0
+    local priority = has_caller_priority and sort_priority
+                                          or Repo.getSortPriority("all")
+    -- Legacy single-key view of the priority -- kept for the existing
+    -- "needs" prefetch logic and the cache-key path; the actual sort goes
+    -- through SortEngine.chainedComparator(priority) below.
+    local sort_key = (priority and priority[1] and priority[1].key)
+                  or Repo.getSortKey("all")
+    -- reverse + mixed only apply on the fallback path; with a caller-supplied
+    -- priority, each level encodes its own reverse and the partition stays
+    -- folders-first (the natural choice when chip sort drives book order).
+    local reverse  = (not has_caller_priority) and BookshelfSettings.read("sort_all_reverse") == true
+    local mixed    = (not has_caller_priority) and BookshelfSettings.read("sort_all_mixed")   == true
+    -- Cache key includes a stable serialization of the priority so chips
+    -- with different sort_priority don't collide on cached shapes.
+    local prio_parts = {}
+    if priority then
+        for _, lv in ipairs(priority) do
+            prio_parts[#prio_parts + 1] = (lv.key or "") .. (lv.reverse and "R" or "")
+        end
+    end
     local cache_key = table.concat({
-        path, sort_key, reverse and "R" or "", mixed and "M" or "",
+        path, table.concat(prio_parts, ","),
+        reverse and "R" or "", mixed and "M" or "",
     }, "\0")
     local now   = os.time()
     local entry = _all_cache[cache_key]
@@ -1320,11 +1354,10 @@ function Repo.getAll(path, limit, offset)
     end
 
     -- Pre-fetch data required by the comparator before sorting so each
-    -- comparison stays O(1). Derive needs from the priority list so that
+    -- comparison stays O(1). Derive needs from the effective priority
+    -- (caller's or the "all" fallback, set up at the top of getAll) so
     -- multi-key sorts (e.g. author_surname, series_index) get the right
-    -- metadata swept in -- the old legacy sort_key string only triggered
-    -- title/percent fetches, leaving author/series nil for those keys.
-    local priority = Repo.getSortPriority("all")
+    -- metadata swept in.
     local needs = {}
     for _, level in ipairs(priority) do
         local k = level.key
@@ -1457,7 +1490,10 @@ function Repo.getAll(path, limit, offset)
         end
     end
 
-    table.sort(entries, _makeAllSort(sort_key))
+    -- Sort with the effective priority. SortEngine handles per-level
+    -- reverse internally, so the legacy whole-list reverse only fires on
+    -- the fallback path (no caller-supplied priority).
+    table.sort(entries, SortEngine.chainedComparator(priority))
     if reverse then
         local n = #entries
         for i = 1, math.floor(n / 2) do
@@ -2217,6 +2253,42 @@ function Repo.getGroupChoices(kind)
     return out
 end
 
+-- getFolderChoices: every directory under home_dir that contains a book at any
+-- depth, surfaced as picker choices for the "Specific folder…" chip source.
+-- Walks the cached library file list (no fresh lfs scan) and collects every
+-- ancestor of every book between home_dir (exclusive) and the book's filename.
+-- Stored without a trailing slash so the path matches what Repo.getAll(path)
+-- expects (its _joinPath would otherwise double-slash) and what the Home-
+-- folders drilldown writes (shape.path = raw lfs entry, no trailing slash).
+-- Sorted by lowercased full path so siblings naturally group under parents.
+function Repo.getFolderChoices()
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local cands = cachedWalk(home, depth)
+    -- home == "/" is kept as literal so the loop's parent ~= home_norm check
+    -- terminates at root; for any other home we strip trailing slashes so the
+    -- equality compares cleanly.
+    local home_norm = home == "/" and "/" or home:gsub("/+$", "")
+
+    local seen = {}
+    for _, c in ipairs(cands) do
+        local fp = c.fp or ""
+        local parent = fp:match("^(.*)/[^/]+$")
+        while parent and parent ~= "" and parent ~= home_norm do
+            seen[parent] = true
+            parent = parent:match("^(.*)/[^/]+$")
+        end
+    end
+
+    local out = {}
+    for path in pairs(seen) do
+        local basename = path:match("([^/]+)$") or path
+        out[#out + 1] = { value = path, label = basename, subtitle = path }
+    end
+    table.sort(out, function(a, b) return a.value:lower() < b.value:lower() end)
+    return out
+end
+
 -- Build a normalized format string from a filepath. UPPERCASE because that's
 -- how the rest of bookshelf (book detail, etc.) presents formats. Returns nil
 -- for files with no extension so _buildGroups skips them.
@@ -2716,16 +2788,17 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit)
     -- the predicate path whenever sort_priority is non-empty so the full
     -- SortEngine drives the order. Reported by user feedback on v2.0.1.
     --
-    -- Exception: kind == "all" stays on the legacy fetcher even with a
-    -- custom sort_priority, because Repo.getAll produces FOLDER cards in
-    -- addition to books (Home chip's folder-summary view). The predicate
-    -- path returns books only and would silently strip the folder cards.
-    -- Honouring sort_priority on Home is a follow-up; the user's reported
-    -- case (Favourites) is covered.
+    -- kind == "all" and kind == "folder" dispatch to Repo.getAll because
+    -- that path produces FOLDER cards in addition to books (the tree view
+    -- the user expects for a folder-organised library). The predicate path
+    -- below returns books only and runs only when a status filter is active
+    -- (books-only degradation). The caller's sort_priority is threaded into
+    -- getAll so chip-configured sort applies to both partitions.
     local has_status_filter = filter and filter.statuses and next(filter.statuses) ~= nil
     local has_custom_sort   = sort_priority and #sort_priority > 0
     if not has_status_filter then
-        if kind == "all"       then return Repo.getAll(nil, limit, offset)         end
+        if kind == "all"       then return Repo.getAll(nil, limit, offset, sort_priority)        end
+        if kind == "folder"    then return Repo.getAll(source.id, limit, offset, sort_priority)  end
         if not has_custom_sort then
             if kind == "recent"    then return Repo.getRecent(limit, offset)       end
             if kind == "latest"    then return Repo.getLatest(limit, offset)       end
@@ -2861,7 +2934,13 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit)
                 return set[b.filepath]
             end)
         elseif kind == "folder" then
-            local prefix = source.id or ""
+            -- Reached only when a status filter is active (otherwise the
+            -- early-return above sends folder chips to getAll for tree view).
+            -- Books-only descent: prefix is source.id with exactly one
+            -- trailing slash so "/lib/comics" doesn't false-match
+            -- "/lib/comics-x/...". Accepts source.id stored either with or
+            -- without a trailing slash.
+            local prefix = (source.id or ""):gsub("/+$", "") .. "/"
             candidates = loadCandidatesByPredicate(function(b)
                 return type(b.filepath) == "string" and b.filepath:sub(1, #prefix) == prefix
             end)
