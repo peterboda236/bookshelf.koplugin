@@ -2846,6 +2846,15 @@ function BookshelfWidget:_previewBook(book, tap_t)
     -- bar and token lines, so upgrade to the full Book record here. Single-
     -- book DocSettings read on each preview tap is fine.
     self._preview_book = Repo.buildBook(book.filepath) or book
+    -- Stash the freshly-built record so the _swapHeroInPlace ->
+    -- _buildHero call below doesn't pay DocSettings:open() a second time
+    -- for the same filepath. _buildHero consumes destructively. Skipped
+    -- when buildBook returned nil (fell back to the shelf record), since
+    -- _buildHero still needs to attempt a real build in that case.
+    if self._preview_book and self._preview_book.filepath == book.filepath
+            and self._preview_book ~= book then
+        self._hero_book_cache = self._preview_book
+    end
     local _perf_t2 = _gettime()
     logger.dbg(string.format(
         "[bookshelf perf] _previewBook: buildBook=%.0fms",
