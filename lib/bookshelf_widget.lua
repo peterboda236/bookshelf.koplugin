@@ -98,6 +98,11 @@ function BookshelfWidget._coverNeedsResize(info, specs)
 end
 
 function BookshelfWidget:init()
+    -- Diag: cradle init so the cold-start trace shows init time
+    -- distinct from the _rebuild it triggers at the end. Two markers
+    -- (entry, post-settings-and-gesture-setup) plus the existing
+    -- _rebuild log line tell the whole story.
+    local _diag_init_t0 = _gettime()
     self.width  = Screen:getWidth()
     self.height = Screen:getHeight()
     self.dimen  = Geom:new{ w = self.width, h = self.height }
@@ -234,8 +239,15 @@ function BookshelfWidget:init()
     -- zones here. Doing so previously also ignored the user's
     -- `activation_menu` preference — fixed as a side benefit.)
 
+    local _diag_init_t_pre_rebuild = _gettime()
     self:_rebuild()
     self:_startStatusTimer()
+    logger.info(string.format(
+        "[bookshelf perf] BookshelfWidget:init: pre_rebuild=%.0fms"
+        .. " rebuild+timer=%.0fms TOTAL=%.0fms chip=%s",
+        (_diag_init_t_pre_rebuild - _diag_init_t0) * 1000,
+        (_gettime() - _diag_init_t_pre_rebuild) * 1000,
+        (_gettime() - _diag_init_t0) * 1000, self.chip))
 end
 
 -- Bookshelf is the topmost widget while it's on screen, so KOReader's
@@ -1356,9 +1368,21 @@ function BookshelfWidget:_rebuild()
                                               -- VerticalSpan above.
         },
     }
-    logger.info(string.format("[bookshelf perf] _rebuild: TOTAL=%.0fms chip=%s page=%d/%d items=%d",
-        (_gettime() - _perf_t0) * 1000, _perf_chip, _perf_page, total_pages, total))
+    local _perf_t4 = _gettime()
+    logger.dbg(string.format("[bookshelf perf] _rebuild: assemble=%.0fms",
+        (_perf_t4 - _perf_t3) * 1000))
+    logger.info(string.format(
+        "[bookshelf perf] _rebuild: TOTAL=%.0fms chip=%s page=%d/%d items=%d"
+        .. " (hero=%.0f fetch=%.0f shelves=%.0f assemble=%.0f)",
+        (_perf_t4 - _perf_t0) * 1000, _perf_chip, _perf_page, total_pages, total,
+        (_perf_t1 - _perf_t0) * 1000,
+        (_perf_t2 - _perf_t1) * 1000,
+        (_perf_t3 - _perf_t2) * 1000,
+        (_perf_t4 - _perf_t3) * 1000))
+    local _perf_persist_t0 = _gettime()
     self:_persistNavState()
+    logger.dbg(string.format("[bookshelf perf] _rebuild: persist=%.0fms",
+        (_gettime() - _perf_persist_t0) * 1000))
 end
 
 -- ─── Background metadata extraction ──────────────────────────────────────────
@@ -2418,8 +2442,9 @@ function BookshelfWidget:_swapShelvesInPlace()
             if w and w.free then pcall(function() w:free() end) end
         end
     end)
-    logger.dbg(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d",
-        (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0))
+    logger.info(string.format("[bookshelf perf] _swapShelves: TOTAL=%.0fms page=%d/%d items=%d chip=%s",
+        (_gettime() - _perf_t0) * 1000, self.page, self._total_pages or 0,
+        self._total_items or 0, self.chip))
     UIManager:setDirty(self, "ui")
     -- Pagination via _swapShelvesInPlace bypasses _rebuild's persist hook;
     -- repeat the save here so a forward/back swipe is enough to land back
@@ -3598,6 +3623,11 @@ end
 -- both produce identical state transitions.
 function BookshelfWidget:_setActiveChip(key)
     if not key or key == self.chip then return end
+    -- Diag: wrap the chip-switch flow so the log shows the elapsed time
+    -- between user action and rebuild-done. _rebuild logs its own
+    -- breakdown; this outer log is the user-facing TOTAL.
+    local _diag_t0   = _gettime()
+    local _diag_from = self.chip
     self:_clearDpadFocus()
     -- Pre-paint feedback on the destination chip: same affordance taps
     -- get, so a swipe-driven tab change feels just as responsive even
@@ -3607,6 +3637,7 @@ function BookshelfWidget:_setActiveChip(key)
     if self._chip_bar and self._chip_bar.flashPending then
         self._chip_bar:flashPending(key)
     end
+    local _diag_t_flash = _gettime()
     self._drilldown_path = {}
     self.chip            = key
     self._cursor         = 1
@@ -3614,6 +3645,12 @@ function BookshelfWidget:_setActiveChip(key)
     BookshelfSettings.save("active_chip", key)
     self:_rebuild()
     UIManager:setDirty(self, "ui")
+    logger.info(string.format(
+        "[bookshelf perf] chip-switch: from=%s to=%s flash=%.0fms rebuild=%.0fms TOTAL=%.0fms",
+        _diag_from, key,
+        (_diag_t_flash - _diag_t0) * 1000,
+        (_gettime() - _diag_t_flash) * 1000,
+        (_gettime() - _diag_t0) * 1000))
 end
 
 -- _isHeroSwipe(ges) -> bool
@@ -3679,6 +3716,21 @@ function BookshelfWidget:paintTo(bb, x, y)
     local sh = Screen:getHeight()
     if sw ~= self.width or sh ~= self.height then
         self:_rebuild()
+    end
+    -- Diag: one-shot first-paint marker for cold-start traces. The init
+    -- log fires at end of :init() (well before the paint actually
+    -- happens), and the Bookshelf:show TOTAL fires before UIManager has
+    -- drained the show queue. This marker captures the actual
+    -- show-to-first-pixel latency. Cleared so subsequent paints stay
+    -- silent.
+    if not self._diag_first_paint_done then
+        self._diag_first_paint_done = true
+        local _diag_paint_t0 = _gettime()
+        InputContainer.paintTo(self, bb, x, y)
+        logger.info(string.format(
+            "[bookshelf perf] paintTo: FIRST first_paint=%.0fms chip=%s",
+            (_gettime() - _diag_paint_t0) * 1000, self.chip))
+        return
     end
     InputContainer.paintTo(self, bb, x, y)
 end
@@ -3922,11 +3974,17 @@ function BookshelfWidget:_paginateNext()
     -- >8 books needs to page through. Earlier this early-returned on
     -- _expanded_series because the footer label was hijacked for back;
     -- breadcrumb mode in the chip strip handles back now.
+    local _diag_t0     = _gettime()
+    local _diag_page0  = self.page
     local total = self._total_pages or 1
     if self.page < total then
         self:_advanceCursor(1)
         self:_syncPageFromCursor()
         self:_swapShelvesInPlace()
+        logger.info(string.format(
+            "[bookshelf perf] paginate: dir=next %d->%d/%d TOTAL=%.0fms chip=%s",
+            _diag_page0, self.page, total,
+            (_gettime() - _diag_t0) * 1000, self.chip))
         return true
     end
     -- Last page at top level (no drill-down) and chip strip visible
@@ -3935,16 +3993,27 @@ function BookshelfWidget:_paginateNext()
     -- breadcrumb or east-swipe.
     if #self._drilldown_path == 0 and not self._chip_bar_hidden then
         local next_key = self:_chipNeighbour(1)
-        if next_key then self:_setActiveChip(next_key) end
+        if next_key then
+            logger.info(string.format(
+                "[bookshelf perf] paginate: dir=next at end -> chip-switch elapsed=%.0fms",
+                (_gettime() - _diag_t0) * 1000))
+            self:_setActiveChip(next_key)
+        end
     end
     return true
 end
 
 function BookshelfWidget:_paginatePrev()
+    local _diag_t0    = _gettime()
+    local _diag_page0 = self.page
     if self.page > 1 then
         self:_advanceCursor(-1)
         self:_syncPageFromCursor()
         self:_swapShelvesInPlace()
+        logger.info(string.format(
+            "[bookshelf perf] paginate: dir=prev %d->%d/%d TOTAL=%.0fms chip=%s",
+            _diag_page0, self.page, self._total_pages or 1,
+            (_gettime() - _diag_t0) * 1000, self.chip))
         return true
     end
     -- Already on page 1: if drilled into a folder/series, treat this as
@@ -4030,9 +4099,13 @@ end
 -- the grid from 2 to 3 rows. No-op when already expanded.
 function BookshelfWidget:onSwipeShelvesUp(_, ges)
     if self._expanded then return false end
+    local _diag_t0 = _gettime()
     self._expanded = true
     self:_rebuild()
     UIManager:setDirty(self, "ui")
+    logger.info(string.format(
+        "[bookshelf perf] toggle: dir=expand TOTAL=%.0fms chip=%s",
+        (_gettime() - _diag_t0) * 1000, self.chip))
     return true
 end
 
@@ -4049,9 +4122,13 @@ end
 --     preview; south is reserved).
 function BookshelfWidget:onSwipeShelvesDown(_, ges)
     if self._expanded then
+        local _diag_t0 = _gettime()
         self._expanded = false
         self:_rebuild()
         UIManager:setDirty(self, "ui")
+        logger.info(string.format(
+            "[bookshelf perf] toggle: dir=collapse TOTAL=%.0fms chip=%s",
+            (_gettime() - _diag_t0) * 1000, self.chip))
         return true
     end
     -- Only claim the gesture for a refresh when it started in the shelf

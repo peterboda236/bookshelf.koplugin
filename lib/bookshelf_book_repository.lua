@@ -2772,6 +2772,14 @@ end
 function Repo.getBySource(source, filter, sort_priority, offset, limit)
     if not source or not source.kind then return {}, 0 end
     local kind = source.kind
+    -- Diag: wrap getBySource so chip-switch / pagination logs can be
+    -- correlated with fetch cost. The repo's existing per-fetcher logs
+    -- show the *internal* breakdown; this outer log shows the
+    -- end-to-end cost the caller pays, including the dispatch overhead
+    -- and any predicate-path detour.
+    local _diag_t0 = _gettime()
+    local _diag_id = (source.id and (": id=" .. tostring(source.id):sub(1, 32)))
+                     or ""
 
     -- Built-in kinds: delegate to existing functions; they already use
     -- Repo.getSortPriority(kind) internally, so callers should not pass
@@ -3174,6 +3182,10 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit)
         local b = _safeBuildBookMeta(paths[i])
         if b then page[#page + 1] = b end
     end
+    logger.info(string.format(
+        "[bookshelf perf] getBySource: kind=%s%s path=predicate cached=%s total=%d elapsed=%.0fms",
+        kind, _diag_id, cached_paths and "HIT" or "MISS", total,
+        (_gettime() - _diag_t0) * 1000))
     return page, total
 end
 
