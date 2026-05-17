@@ -4447,9 +4447,11 @@ function BookshelfWidget:_openBookMenu(item)
     -- TBR ("To Be Read") quick-toggle. Mirrors the SimpleUI book menu's
     -- "Add to To Be Read" affordance: a one-tap collection toggle for
     -- the most common reading-list collection beyond Favourites.
-    -- Internal collection name is "tbr" (lowercase, no space) so it
-    -- round-trips through ReadCollection cleanly; display is "TBR".
-    local TBR_COLL = "tbr"
+    -- Uses the literal "To Be Read" name SimpleUI's auto-created
+    -- collection uses, so users with both plugins installed see one
+    -- shared collection rather than parallel "tbr" / "To Be Read"
+    -- entries. Verified against the user's settings/collection.lua.
+    local TBR_COLL = "To Be Read"
     local ok_tbr, in_tbr = pcall(function()
         return ReadCollection:isFileInCollection(book.filepath, TBR_COLL)
     end)
