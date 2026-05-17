@@ -960,18 +960,115 @@ function Settings:_pickLatestDepth()
     })
 end
 
--- Strip image references from a markdown blob. The README's screenshots
--- and logo are GitHub-hosted URLs that crengine can't fetch over the
--- network from a Kindle, so they render as broken-image placeholders.
--- Drop them before conversion. Handles both Markdown image syntax
--- (![alt](src) and ![alt][ref]) and HTML <img ...> tags.
-local function _stripMarkdownImages(md)
+-- Strip REMOTE image references from a markdown blob (http(s) URLs that
+-- MuPDF / crengine can't fetch over the network from a Kindle). Local
+-- relative refs survive so the bundled logo at assets/bookshelf-logo.png
+-- renders via the html_resource_directory passed to ScrollHtmlWidget.
+-- Also flattens <picture><source ...><img ...></picture> to just the
+-- inner <img> -- MuPDF doesn't know the picture element so the wrapper
+-- and srcset selectors get dropped, keeping the fallback img.
+local function _stripRemoteImages(md)
     if not md then return "" end
-    md = md:gsub("!%b[]%b()", "")    -- ![alt](src)
-    md = md:gsub("!%b[]%b[]", "")    -- ![alt][ref]
-    md = md:gsub("<img[^>]*>", "")   -- <img src="..." ...>
-    md = md:gsub("<picture[%s%S]-</picture>", "")  -- whole <picture> blocks
+    -- Markdown ![alt](http(s)://...)
+    md = md:gsub("!%[[^%]]*%]%(https?://[^%s%)]+%)", "")
+    -- <img src="http://..."> with double or single quotes
+    md = md:gsub("<img[^>]-src=\"https?://[^\"]+\"[^>]*>", "")
+    md = md:gsub("<img[^>]-src='https?://[^']+'[^>]*>", "")
+    -- <picture>...</picture> wrappers: strip the wrapper + the <source>
+    -- variants, leave the inner <img>. MuPDF doesn't understand the
+    -- prefers-color-scheme media query anyway.
+    md = md:gsub("<picture[^>]*>", "")
+    md = md:gsub("</picture>", "")
+    md = md:gsub("<source[^>]->", "")
     return md
+end
+
+-- Convert GFM-style markdown tables to inline HTML <table> blocks. The
+-- bundled luamd parser (apps/filemanager/lib/md.lua, ~2018 vintage)
+-- has no table support -- it treats table rows as plain paragraphs, so
+-- the README's gestures / tokens / config tables come out as one long
+-- pipe-delimited mess. Pre-process them to HTML here; mdToHtml passes
+-- raw HTML through untouched.
+--
+-- Detection rule: header row has at least one `|`, separator row is
+-- only `|`, `-`, `:`, and whitespace, and contains `---`. Subsequent
+-- pipe rows belong to the table until a non-pipe line ends it.
+local function _convertMarkdownTables(md)
+    if not md then return "" end
+    local lines = {}
+    -- Preserve trailing newlines; gmatch with "([^\n]*)\n?" is finicky.
+    for line in (md .. "\n"):gmatch("([^\n]*)\n") do
+        lines[#lines + 1] = line
+    end
+    local function isPipeRow(line)
+        return line and line:find("|") ~= nil
+    end
+    local function isSeparator(line)
+        if not line then return false end
+        return line:match("^%s*|?[%s|:%-]+|?%s*$") ~= nil
+            and line:find("%-%-%-") ~= nil
+    end
+    -- Inline-markdown rendering for table cells. Once a cell is HTML
+    -- it skips luamd's pass, so **bold**, *italic*, `code`, and
+    -- [text](url) need to be rendered here or they'd appear literally
+    -- in the rendered table. Order matters: bold (** **) before
+    -- italic (* *) so the latter doesn't eat the bold delimiters.
+    local function renderInline(s)
+        s = s:gsub("%*%*([^%*]+)%*%*", "<strong>%1</strong>")
+        s = s:gsub("%*([^%*]+)%*",     "<em>%1</em>")
+        s = s:gsub("`([^`]+)`",        "<code>%1</code>")
+        s = s:gsub("%[([^%]]+)%]%(([^%)]+)%)",
+                   "<a href=\"%2\">%1</a>")
+        return s
+    end
+    local function splitCells(row)
+        -- Trim leading/trailing `|` then split on `|`. Cells get
+        -- whitespace-trimmed and inline-md-rendered; empty cells
+        -- produce empty <td>.
+        local trimmed = row:gsub("^%s*|", ""):gsub("|%s*$", "")
+        local cells = {}
+        for cell in (trimmed .. "|"):gmatch("([^|]*)|") do
+            local clean = cell:match("^%s*(.-)%s*$") or ""
+            cells[#cells + 1] = renderInline(clean)
+        end
+        return cells
+    end
+    local out, i = {}, 1
+    local in_code = false
+    while i <= #lines do
+        local line = lines[i]
+        if line:match("^%s*```") then
+            in_code = not in_code
+            out[#out + 1] = line
+            i = i + 1
+        elseif not in_code and isPipeRow(line) and isSeparator(lines[i + 1]) then
+            -- Collect header (i), skip separator (i+1), then all
+            -- subsequent pipe rows.
+            local rows = { line }
+            local j = i + 2
+            while isPipeRow(lines[j]) do
+                rows[#rows + 1] = lines[j]
+                j = j + 1
+            end
+            out[#out + 1] = "<table>"
+            for r, row in ipairs(rows) do
+                local cells = splitCells(row)
+                local tag = (r == 1) and "th" or "td"
+                local parts = { "<tr>" }
+                for _i, c in ipairs(cells) do
+                    parts[#parts + 1] = "<" .. tag .. ">" .. c .. "</" .. tag .. ">"
+                end
+                parts[#parts + 1] = "</tr>"
+                out[#out + 1] = table.concat(parts)
+            end
+            out[#out + 1] = "</table>"
+            i = j
+        else
+            out[#out + 1] = line
+            i = i + 1
+        end
+    end
+    return table.concat(out, "\n")
 end
 
 function Settings:_about()
@@ -988,7 +1085,7 @@ function Settings:_about()
         if ok then meta = m end
     end
     local name    = (meta and meta.fullname)    or "Bookshelf"
-    local version = (meta and meta.version)     or "0.1.0"
+    local version = (meta and meta.version)     or "?"
 
     -- Load README from the plugin root. The release zip ships it
     -- alongside _meta.lua. Fall back to the old short InfoMessage if
@@ -1011,9 +1108,12 @@ function Settings:_about()
         return
     end
 
-    -- Prepend a version header so the user sees what's installed without
-    -- scrolling to the bottom of the README.
-    readme = "# " .. name .. " v" .. version .. "\n\n" .. _stripMarkdownImages(readme)
+    -- README is the source of truth; no synthetic version header here.
+    -- The installed version is shown by the Updates row in the menu and
+    -- duplicating it at the top of every About view risked drift if a
+    -- future change ever forgot to keep this prepend in sync.
+    readme = _stripRemoteImages(readme)
+    readme = _convertMarkdownTables(readme)
 
     -- Light stylesheet tuned for e-ink: no colours, generous line height,
     -- collapsible <details> blocks (the README's reference sections use
@@ -1063,7 +1163,10 @@ function Settings:_about()
     local dialog
     local title_bar = TitleBar:new{
         width            = frame_w,
-        title            = name .. " " .. _("README"),
+        -- Plain English string: README body itself is English, and the
+        -- word doesn't translate meaningfully (it's the file's name).
+        -- Excluded from xgettext extraction by skipping the _() wrapper.
+        title            = name .. " README",
         close_callback   = function() UIManager:close(dialog) end,
         with_bottom_line = true,
     }
@@ -1071,10 +1174,19 @@ function Settings:_about()
     local body_h  = frame_h - title_h - Size.padding.large * 2
 
     local html_widget = ScrollHtmlWidget:new{
-        html_body         = html,
-        width             = frame_w - Size.padding.large * 2,
-        height            = body_h,
-        default_font_size = Screen:scaleBySize(15),
+        html_body                = html,
+        width                    = frame_w - Size.padding.large * 2,
+        height                   = body_h,
+        -- 22 reads well on PW5 (~270 DPI); the default 24 is for full-
+        -- screen text without competing chrome, and 15 was too tight
+        -- (user feedback). Falls through Screen:scaleBySize so other
+        -- DPIs get a proportional bump.
+        default_font_size        = Screen:scaleBySize(22),
+        -- Resource root: lets crengine/MuPDF resolve relative <img>
+        -- srcs like "assets/bookshelf-logo.png" against the plugin
+        -- directory. Without this, local images render as broken
+        -- placeholders.
+        html_resource_directory  = plugin_dir,
     }
 
     local frame = FrameContainer:new{
