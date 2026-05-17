@@ -4268,15 +4268,24 @@ function BookshelfWidget:_buildBookMenuHeader(book)
     -- ImageWidget can own + free (cover_bb is one-shot per the
     -- feedback_image_disposable_shared_book memory; reusing the bb on
     -- `book` here would tear out from under whoever painted last).
+    -- Wrap the ImageWidget in a thin FrameContainer so the cover has a
+    -- 1dp border; without it pale covers (white sky, light typography)
+    -- bleed straight into the dialog's white background and the
+    -- thumbnail loses its rectangular shape.
     local fresh = Repo.buildBookMeta(book.filepath) or book
     local thumb_widget
     if fresh.cover_bb then
-        thumb_widget = ImageWidget:new{
-            image            = fresh.cover_bb,
-            image_disposable = true,
-            width            = thumb_w,
-            height           = thumb_h,
-            scale_factor     = 0,
+        thumb_widget = FrameContainer:new{
+            bordersize = Size.border.thin,
+            padding    = 0,
+            margin     = 0,
+            ImageWidget:new{
+                image            = fresh.cover_bb,
+                image_disposable = true,
+                width            = thumb_w,
+                height           = thumb_h,
+                scale_factor     = 0,
+            },
         }
     end
 
@@ -4472,11 +4481,18 @@ function BookshelfWidget:_openBookMenu(item)
     -- the existing Author / Series / Genre rows. No tab-enabled gate --
     -- folder drilldown works regardless of which chips the user has
     -- enabled (it goes through _expandFolder, not through a chip).
+    -- Truncate the displayed basename so deeply-named Calibre folders
+    -- (e.g. "Proof of Heaven_ A Neurosurgeon's Journey Into the
+    -- Afterlife") don't push the button text past the dialog edge.
     local parent_dir = book.filepath and book.filepath:match("^(.*)/[^/]+$")
     if parent_dir and parent_dir ~= "" then
         local folder_label = parent_dir:match("([^/]+)$") or parent_dir
+        local display_label = folder_label
+        if #display_label > 32 then
+            display_label = display_label:sub(1, 30) .. "\xE2\x80\xA6"
+        end
         nav_rows[#nav_rows + 1] = {
-            { text = "Go to folder: " .. folder_label,
+            { text = "Go to folder: " .. display_label,
               callback = closing(function()
                 bw._drilldown_path = {}
                 bw:_expandFolder({ path = parent_dir, label = folder_label })
@@ -4484,99 +4500,92 @@ function BookshelfWidget:_openBookMenu(item)
         }
     end
 
-    -- Build the complete buttons table before construction — ButtonDialog
-    -- processes self.buttons into a ButtonTable widget synchronously in
-    -- init(), so any mutations after new{} are invisible to the rendered dialog.
-    local buttons = {
-        {
-            { text = "Show info",
-              callback = closing(function()
-                -- filemanagerbookinfo:show does lfs.attributes(file).size with
-                -- no nil guard — passing a missing filepath panics LuaJIT and
-                -- drops to stock Kindle. Bail with a toast for stale records.
-                local lfs = require("libs/libkoreader-lfs")
-                if lfs.attributes(book.filepath, "mode") ~= "file" then
-                    UIManager:show(require("ui/widget/infomessage"):new{
-                        text    = _("File no longer exists. The bookshelf entry is stale."),
-                        timeout = 3,
-                    })
-                    return
-                end
-                local FileManager = require("apps/filemanager/filemanager")
-                local FileManagerBookInfo = require("apps/filemanager/filemanagerbookinfo")
-                if FileManager.instance and FileManager.instance.bookinfo then
-                    FileManager.instance.bookinfo:show(book.filepath)
-                else
-                    FileManagerBookInfo:new{}:show(book.filepath)
-                end
-              end) },
-            { text = fav_label,
-              callback = closing(function()
-                -- KOReader API quirks (frontend/readcollection.lua):
-                --   * addItem only updates in-memory state -- needs a
-                --     caller-side :write() to persist.
-                --   * removeItem DOES call :write({ collection_name = true })
-                --     internally (line 189) BUT passes the literal string
-                --     "collection_name" as the table key rather than the
-                --     variable's value. :write at line 76 then checks
-                --     updated_collections[coll_name] (e.g. "favorites"),
-                --     finds nil, and skips persisting the affected
-                --     collection. In-memory state updates correctly, but
-                --     the on-disk file stays stale -- so removed
-                --     favourites come back on the next KOReader restart.
-                -- Workaround: explicit :write({ favorites = true }) on
-                -- both branches, with the right key, so removal actually
-                -- persists.
-                local ok, already = pcall(function()
-                    return ReadCollection:isFileInCollection(book.filepath, "favorites")
-                end)
-                if ok and already then
-                    ReadCollection:removeItem(book.filepath, "favorites")
-                    ReadCollection:write({ favorites = true })
-                else
-                    ReadCollection:addItem(book.filepath, "favorites")
-                    ReadCollection:write({ favorites = true })
-                end
-                -- Chip caches store filepath lists post-filter -- a
-                -- favourites add/remove changes membership in the
-                -- favourites chip AND in any custom chip that filters on
-                -- collections, so the per-source caches must be wiped or
-                -- the toggle won't surface until swipe-down. (Issue #40.)
-                Repo.invalidateBookCache("favorites-toggle")
-                bw:_rebuild()
-                UIManager:setDirty(bw, "ui")
-              end) },
-        },
-        {
-            { text = "Remove from history",
-              callback = closing(function()
-                require("readhistory"):removeItemByPath(book.filepath)
-                -- Recent chip + any custom chip sorted by last_opened or
-                -- filtered on history membership caches the post-filter
-                -- filepath list; the removal won't surface until we clear
-                -- those caches. (Issue #40.)
-                Repo.invalidateBookCache("remove-from-history")
-                bw:_rebuild()
-                UIManager:setDirty(bw, "ui")
-              end) },
-        },
+    -- Build each button spec as a named local so the final buttons
+    -- table assembles in the visual order we want without re-deriving
+    -- closures. Order layout:
+    --   1. Status row (Reading / On hold / Finished / Mark as new)
+    --   2. Show info / favourites
+    --   3. Tags... / Refresh metadata
+    --   4. Rating / Remove from history
+    --   5. Reset / Delete
+    --   ... nav rows ...
+    --   Cancel
+
+    local show_info_button = {
+        text = "Show info",
+        callback = closing(function()
+            -- filemanagerbookinfo:show does lfs.attributes(file).size with
+            -- no nil guard -- passing a missing filepath panics LuaJIT
+            -- and drops to stock Kindle. Bail with a toast for stale
+            -- records.
+            local lfs = require("libs/libkoreader-lfs")
+            if lfs.attributes(book.filepath, "mode") ~= "file" then
+                UIManager:show(require("ui/widget/infomessage"):new{
+                    text    = _("File no longer exists. The bookshelf entry is stale."),
+                    timeout = 3,
+                })
+                return
+            end
+            local FileManager = require("apps/filemanager/filemanager")
+            local FileManagerBookInfo = require("apps/filemanager/filemanagerbookinfo")
+            if FileManager.instance and FileManager.instance.bookinfo then
+                FileManager.instance.bookinfo:show(book.filepath)
+            else
+                FileManagerBookInfo:new{}:show(book.filepath)
+            end
+        end),
     }
 
-    -- Tag management + force metadata refresh. Tags... delegates to
-    -- KOReader's FileManagerCollection editor (the same UI tap-tag-to-
-    -- toggle list FileManager uses) so users get one familiar surface
-    -- for collection membership. Refresh metadata wipes the cached BIM
-    -- row so the next render's _kickOffMissingMetaExtraction re-extracts.
-    buttons[#buttons + 1] = {
-        { text = "Tags\xE2\x80\xA6",
-          callback = closing(function()
+    local fav_button = {
+        text = fav_label,
+        callback = closing(function()
+            -- KOReader API quirks (frontend/readcollection.lua):
+            --   * addItem only updates in-memory state -- needs a
+            --     caller-side :write() to persist.
+            --   * removeItem DOES call :write({ collection_name = true })
+            --     internally (line 189) BUT passes the literal string
+            --     "collection_name" as the table key rather than the
+            --     variable's value. :write at line 76 then checks
+            --     updated_collections[coll_name] (e.g. "favorites"),
+            --     finds nil, and skips persisting the affected
+            --     collection. In-memory state updates correctly, but
+            --     the on-disk file stays stale -- so removed favourites
+            --     come back on the next KOReader restart.
+            -- Workaround: explicit :write({ favorites = true }) on both
+            -- branches, with the right key, so removal actually
+            -- persists.
+            local ok, already = pcall(function()
+                return ReadCollection:isFileInCollection(book.filepath, "favorites")
+            end)
+            if ok and already then
+                ReadCollection:removeItem(book.filepath, "favorites")
+                ReadCollection:write({ favorites = true })
+            else
+                ReadCollection:addItem(book.filepath, "favorites")
+                ReadCollection:write({ favorites = true })
+            end
+            Repo.invalidateBookCache("favorites-toggle")
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        end),
+    }
+
+    local remove_history_button = {
+        text = "Remove from history",
+        callback = closing(function()
+            require("readhistory"):removeItemByPath(book.filepath)
+            Repo.invalidateBookCache("remove-from-history")
+            bw:_rebuild()
+            UIManager:setDirty(bw, "ui")
+        end),
+    }
+
+    local tags_button = {
+        text = "Tags\xE2\x80\xA6",
+        callback = closing(function()
             local FileManager = require("apps/filemanager/filemanager")
             if FileManager.instance and FileManager.instance.collections then
                 FileManager.instance.collections:onShowCollList(book.filepath, function()
-                    -- The edit may have added or removed the book from
-                    -- collections that custom chips filter on; wipe the
-                    -- per-source caches so the change surfaces without
-                    -- a manual swipe-down.
                     Repo.invalidateBookCache("tag-edit")
                     bw:_rebuild()
                     UIManager:setDirty(bw, "ui")
@@ -4587,14 +4596,17 @@ function BookshelfWidget:_openBookMenu(item)
                     timeout = 3,
                 })
             end
-          end) },
-        { text = "Refresh metadata",
-          callback = closing(function()
+        end),
+    }
+
+    local refresh_button = {
+        text = "Refresh metadata",
+        callback = closing(function()
             -- BookInfoManager.deleteBookInfo removes the cached SQLite
             -- row; the next BIM read sees a miss and the chip rebuild
             -- below queues a fresh extraction via
-            -- _kickOffMissingMetaExtraction. Wipe progress + general
-            -- book caches too so the in-memory state matches.
+            -- _kickOffMissingMetaExtraction. Wipe progress + book
+            -- caches too so in-memory state matches.
             local ok_bim, BIM = pcall(require, "bookinfomanager")
             if ok_bim and BIM and BIM.deleteBookInfo then
                 pcall(function() BIM:deleteBookInfo(book.filepath) end)
@@ -4603,15 +4615,16 @@ function BookshelfWidget:_openBookMenu(item)
             Repo.invalidateBookCache("refresh-metadata")
             bw:_rebuild()
             UIManager:setDirty(bw, "ui")
-          end) },
+            UIManager:show(require("ui/widget/notification"):new{
+                text    = _("Metadata refresh queued"),
+                timeout = 2,
+            })
+        end),
     }
 
-    -- Rating + Mark as new. Rating opens a sub-ButtonDialog with five
-    -- star options + Clear; tap commits via the existing _setBookRating
-    -- (same code the hero card's tap-to-rate uses). Mark as new clears
-    -- progress + last_opened while keeping the sidecar -- ratings,
-    -- highlights, and collection memberships survive. Useful for
-    -- re-readers and for "I tapped this by accident".
+    -- Rating button + sub-dialog. Rating opens a sub-ButtonDialog with
+    -- five star options + Clear; tap commits via the existing
+    -- _setBookRating method.
     local function _ratingLabel()
         local r = tonumber(book.rating) or 0
         if r < 1 or r > 5 then return _("Rating: not set") end
@@ -4650,15 +4663,17 @@ function BookshelfWidget:_openBookMenu(item)
         }
         UIManager:show(rating_dialog)
     end
-    buttons[#buttons + 1] = {
-        { text_func = _ratingLabel, callback = closing(_openRatingDialog) },
-        { text = "Mark as new",
-          callback = closing(function()
-            -- Clear progress + status in the DocSettings summary, drop
-            -- last-opened, and pull the book out of ReadHistory so it
-            -- falls out of the Recent chip. Sidecar metadata that
-            -- isn't reading-state (rating, highlights, bookmarks) is
-            -- left alone -- that's the difference from Reset.
+    local rating_button = {
+        text_func = _ratingLabel,
+        callback  = closing(_openRatingDialog),
+    }
+
+    -- Mark as new: state-only reset (different from full Reset which
+    -- nukes the entire sidecar). Clears progress fields + status, drops
+    -- last_opened; rating, highlights, tags survive.
+    local mark_as_new_button = {
+        text = "Mark as new",
+        callback = closing(function()
             local lfs = require("libs/libkoreader-lfs")
             if lfs.attributes(book.filepath, "mode") ~= "file" then
                 UIManager:show(require("ui/widget/infomessage"):new{
@@ -4683,24 +4698,20 @@ function BookshelfWidget:_openBookMenu(item)
             Repo.invalidateBookCache("mark-as-new")
             bw:_rebuild()
             UIManager:setDirty(bw, "ui")
-          end) },
+        end),
     }
 
-    -- Status row (Reading / On hold / Finished) + Reset / Delete row.
-    -- KOReader's filemanagerutil provides the canonical button generators
-    -- (status enum + cache updates + Reset confirmation dialog), and
-    -- FileManager:showDeleteFileDialog the canonical Delete flow -- reuse
-    -- both so we inherit any future behavioural fixes for free.
+    -- Status row: Reading / On hold / Finished, plus our Mark as new
+    -- button appended as the 4th option (it's the implicit "Unread"
+    -- state -- belongs with the other state-setters rather than off
+    -- with Rating). KOReader's genStatusButtonsRow returns a {} of
+    -- three button specs; appending a 4th is supported by ButtonTable.
     local filemanagerutil = require("apps/filemanager/filemanagerutil")
     local function refresh_book_state()
         Repo.invalidateProgressCache(book.filepath)
-        -- Status changes also shift the book's membership in any
-        -- status-filtered chip and its position in a "Reading" /
-        -- "Unread first" sort, so wipe the per-source caches too --
-        -- otherwise the user has to swipe-down to see a status edit.
-        -- (Issue #40.) genStatusButtonsRow does not broadcast
-        -- BookMetadataChanged itself, so onBookMetadataChanged in main.lua
-        -- won't catch this either.
+        -- Status changes shift membership in status-filtered chips and
+        -- ordering in last-opened sorts; wipe the per-source caches so
+        -- the edit surfaces without a swipe-down. (Issue #40.)
         Repo.invalidateBookCache("openBookMenu/status")
         bw:_rebuild()
         UIManager:setDirty(bw, "ui")
@@ -4709,13 +4720,13 @@ function BookshelfWidget:_openBookMenu(item)
         UIManager:close(dialog)
         refresh_book_state()
     end
-    buttons[#buttons + 1] = filemanagerutil.genStatusButtonsRow(
-        book.filepath, status_callback)
+    local status_row = filemanagerutil.genStatusButtonsRow(book.filepath, status_callback)
+    status_row[#status_row + 1] = mark_as_new_button
 
-    -- Reset: KOReader's generator opens its own ConfirmBox with checkboxes
-    -- (settings / cover / metadata). Close our dialog before the ConfirmBox
-    -- shows so it appears on a clean backdrop; the generator's caller_callback
-    -- runs only on confirmation (handles the rebuild after).
+    -- Reset: KOReader's generator opens its own ConfirmBox with
+    -- checkboxes (settings / cover / metadata). Close our dialog
+    -- before the ConfirmBox shows so it appears on a clean backdrop;
+    -- the generator's caller_callback runs only on confirmation.
     local reset_btn = filemanagerutil.genResetSettingsButton(
         book.filepath, function()
             Repo.invalidateProgressCache(book.filepath)
@@ -4729,10 +4740,10 @@ function BookshelfWidget:_openBookMenu(item)
         orig_reset_cb()
     end
 
-    -- Delete: prefer FileManager:showDeleteFileDialog when available so the
-    -- per-file confirmation, history/collection cleanup, and sdr purge all
-    -- match FM. Fall back to a minimal inline confirm + os.remove when
-    -- bookshelf is running outside an FM context.
+    -- Delete: prefer FileManager:showDeleteFileDialog when available so
+    -- the per-file confirmation, history/collection cleanup, and sdr
+    -- purge all match FM. Fall back to a minimal inline confirm +
+    -- os.remove when bookshelf is running outside an FM context.
     local delete_btn = {
         text = _("Delete"),
         callback = function()
@@ -4771,21 +4782,27 @@ function BookshelfWidget:_openBookMenu(item)
             end
         end,
     }
-    buttons[#buttons + 1] = { reset_btn, delete_btn }
 
+    -- Final assembly: state actions at the top, then info / tag / refresh,
+    -- then rating / remove-from-history, destructive at the bottom of
+    -- the action block, navigation rows below, Cancel last.
+    local buttons = {
+        status_row,
+        { show_info_button, fav_button },
+        { tags_button, refresh_button },
+        { rating_button, remove_history_button },
+        { reset_btn, delete_btn },
+    }
     for _i, row in ipairs(nav_rows) do
         buttons[#buttons + 1] = row
     end
     buttons[#buttons + 1] = { { text = "Cancel", callback = closing() } }
-    dialog = ButtonDialog:new{
-        buttons = buttons,
-    }
+
+    dialog = ButtonDialog:new{ buttons = buttons }
     -- Cover thumbnail + title/author/series header sits above the
-    -- button rows. addWidget appends to the dialog's title group
-    -- before the buttons render, so the visual order is
-    -- [header, buttons]. No title= field -- the header carries the
-    -- book name itself and ButtonDialog's plain-text title would just
-    -- duplicate it.
+    -- button rows. addWidget appends to the dialog's title group so the
+    -- visual order is [header, buttons]. No title= field -- the header
+    -- carries the book name itself.
     local header = self:_buildBookMenuHeader(book)
     if header then
         dialog:addWidget(header)
