@@ -207,11 +207,21 @@ function BookshelfWidget:init()
         SwipeShelvesDown = {
             GestureRange:new{
                 ges = "swipe", direction = "south",
+                -- y starts below the top 1/8th so the top strip stays
+                -- exclusively for KOReader's filemanager_swipe zone
+                -- (DTAP_ZONE_MENU.h = 1/8, full width). Once
+                -- onSwipeShelvesDown's range MATCHES a south-swipe,
+                -- the gesture is consumed inside InputContainer's
+                -- dispatch regardless of the handler's return value —
+                -- returning false from the handler does not propagate
+                -- back to FM. The only way to let FM's top-strip swipe
+                -- reach its menu handler is to not match here in the
+                -- first place.
                 range = Geom:new{
                     x = math.floor(self.width / 8),
-                    y = 0,
+                    y = math.floor(self.height / 8),
                     w = self.width - 2 * math.floor(self.width / 8),
-                    h = self.height,
+                    h = self.height - math.floor(self.height / 8),
                 },
             },
         },

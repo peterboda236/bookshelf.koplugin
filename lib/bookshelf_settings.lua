@@ -777,9 +777,77 @@ function Settings:_settingsSubItems()
             end,
         },
         {
+            text                = _("Expanded shelf"),
+            sub_item_table_func = function()
+                return self:_expandedShelfSubItems()
+            end,
+        },
+        {
             text                = _("Advanced settings"),
             sub_item_table_func = function()
                 return self:_advancedSubItems()
+            end,
+        },
+    }
+end
+
+-- Expanded-shelf settings sub-menu. "Expanded shelf" is the mode where
+-- the hero card is hidden and the book grid fills the screen, with a
+-- thin label strip below each cover. The label content is configurable
+-- here.
+function Settings:_expandedShelfSubItems()
+    -- Local markDirty mirrors the helper in _progressIndicatorsSubItems
+    -- (line ~415). Lifting it to a method on Settings would be the
+    -- cleaner long-term move but stays out of scope for this change.
+    local function markDirty()
+        if self._bw and self._bw._rebuild then
+            self._bw:_rebuild()
+            UIManager:setDirty(self._bw, "ui")
+        end
+    end
+    local function readMode()
+        local v = BookshelfSettings.read("expanded_shelf_label")
+        if v == "title" or v == "author" or v == "series" or v == "none" then
+            return v
+        end
+        return "title"
+    end
+    local function setMode(mode, touchmenu_instance)
+        BookshelfSettings.save("expanded_shelf_label", mode)
+        markDirty()
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+    local labels = {
+        title  = _("Title"),
+        author = _("Author"),
+        series = _("Series"),
+        none   = _("None"),
+    }
+    local function optionRow(mode, label)
+        return {
+            text           = label,
+            checked_func   = function() return readMode() == mode end,
+            radio          = true,
+            keep_menu_open = true,
+            callback       = function(touchmenu_instance)
+                setMode(mode, touchmenu_instance)
+            end,
+        }
+    end
+    return {
+        {
+            text_func = function()
+                return _("Show text below covers") .. ": " .. labels[readMode()]
+            end,
+            sub_item_table_func = function()
+                return {
+                    optionRow("title",  labels.title),
+                    optionRow("author", labels.author),
+                    optionRow("series", labels.series),
+                    optionRow("none",   labels.none),
+                }
             end,
         },
     }
