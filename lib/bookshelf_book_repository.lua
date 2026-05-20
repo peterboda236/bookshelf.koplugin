@@ -645,6 +645,10 @@ end
 -- Returns up to `limit` Book records, sorted newest-by-mtime first, from a
 -- recursive filesystem walk rooted at G_reader_settings `home_dir`.
 -- Walk depth is capped by `bookshelf_latest_walk_depth` setting (default 3).
+-- Lifting the cap on desktop runs (home_dir = $HOME) walks the entire
+-- user tree at unbounded depth and locks up the UI — keep the
+-- conservative default and let users opt into a deeper walk via the
+-- settings spinner if their library lives more than three levels deep.
 -- Results are NOT memoised here — caching is a BookshelfWidget-level concern.
 
 -- KOReader ships LFS as `libs/libkoreader-lfs` and that's the only path that
@@ -718,6 +722,13 @@ local _bySource_cache  = {}  -- { [key] = candidates }
 -- and letting all three readers hit the result is the dominant speedup
 -- (Lutesong's Kindle Color: 20s per chip → ~1-2s, 2000-book library).
 local _light_meta_cache = {}  -- { [key] = { map = {[fp]=record}, expires_at = number } }
+-- Folder→bookpaths cache. Used by selection-mode plumbing to answer
+-- "which book filepaths live (recursively) under this folder?" without
+-- redoing an lfs scan per query. The cached walk-list already knows the
+-- answer; we just prefix-filter it once per (folder, walk-generation)
+-- and memoise. Invalidated alongside the walk cache and inside
+-- cachedWalk's files-changed branch.
+local _folder_book_paths_cache = {}  -- { [path] = { paths = {...} } }
 -- Per-file progress cache. DocSettings:open() does a Lua-parse from disk
 -- per call, which dominates loops that read percent / summary.status for
 -- many books in a row (getAll's prefetch on the Home chip is the obvious
@@ -738,6 +749,18 @@ local _progress_cache    = {}   -- filepath → { pct, status, expires_at }
 -- would silently no-op.
 local _folderHasBooks_cache
 local _normalize_genre_cache
+-- Filter helpers used by group fetchers / hydrators / getAll. Their
+-- definitions live further down (near _buildGroups for readability)
+-- but several call sites — getTags, getAll's folder-filter pass,
+-- hydrateSeriesShape, getSeriesGroups — appear earlier in the file.
+-- Without forward decls, Lua treats those references as globals and
+-- the chip rebuild crashes at runtime with "attempt to call global
+-- '_shapeHasFilteredBook' (a nil value)".
+local _normalizeStatus
+local _statusForFp
+local _filterIsActive
+local _shapeHasFilteredBook
+local _applyFilter
 
 function Repo.invalidateWalkCache()
     _walk_cache       = {}
@@ -749,6 +772,7 @@ function Repo.invalidateWalkCache()
     _all_cache        = {}
     _bySource_cache   = {}
     _light_meta_cache = {}
+    _folder_book_paths_cache = {}
     _progress_cache   = {}
     -- _folderHasBooks_cache: memoizes whether a folder contains a book at
     -- any depth. Previously preserved across invalidations so the negative-
@@ -778,6 +802,16 @@ function Repo.invalidateSeriesCache()
     _formats_cache    = {}
     _ratings_cache    = {}
     _light_meta_cache = {}
+end
+
+-- invalidateAllCache(): drop just the getAll shape cache. Used when a
+-- setting that controls All/Folder sort or partition (e.g. KOReader's
+-- collate_mixed) changes — those settings are part of the cache key,
+-- but pre-existing keyed entries shouldn't linger as warm slots the
+-- user no longer wants to fall back into. Walk cache and group shape
+-- caches are untouched (their data isn't affected by these settings).
+function Repo.invalidateAllCache()
+    _all_cache = {}
 end
 
 -- _resetLightMetaProgress(filepath)  -- nil-internal helper. The
@@ -1060,6 +1094,7 @@ local function cachedWalk(home, depth)
             _all_cache       = {}
             _bySource_cache  = {}
             _light_meta_cache = {}
+            _folder_book_paths_cache = {}
         end
         local dir_count = 0
         for _k in pairs(dirs) do dir_count = dir_count + 1 end
@@ -1304,6 +1339,50 @@ function Repo.clearFolderHasBooksCache()
     _folderHasBooks_cache = {}
 end
 
+-- getFolderBookPaths(path): list of every book filepath under `path` at
+-- any depth (subject to the latest_walk_depth setting that bounds the
+-- underlying cachedWalk). Used by selection-mode plumbing — both the
+-- long-press dialog's add/remove actions and the per-paint "is this
+-- folder card partially selected?" check.
+--
+-- Rides the existing cachedWalk: first call per folder filters the
+-- cached global walk-list by path prefix and memoises. Subsequent calls
+-- are an O(1) map lookup until the walk cache invalidates (which clears
+-- this cache in lockstep), at which point the next call re-filters
+-- against the fresh walk.
+--
+-- Returns a fresh array each call so callers can sort / mutate safely.
+function Repo.getFolderBookPaths(path)
+    if not path or path == "" then return {} end
+    local cached = _folder_book_paths_cache[path]
+    if cached then
+        local out = {}
+        for i = 1, #cached.paths do out[i] = cached.paths[i] end
+        return out
+    end
+    local home  = G_reader_settings:readSetting("home_dir") or "/"
+    local depth = BookshelfSettings.read("latest_walk_depth") or 3
+    local cands = cachedWalk(home, depth)
+    -- Prefix match: a book at `<path>/...` is "under" path. Append "/"
+    -- so we don't match sibling folders that share a name prefix (e.g.
+    -- "/Foo" must not match "/FooBar/book.epub"). Path itself may or
+    -- may not end with "/" — normalise both sides.
+    local prefix = path
+    if prefix:sub(-1) ~= "/" then prefix = prefix .. "/" end
+    local paths = {}
+    for i = 1, #cands do
+        local fp = cands[i].fp
+        if fp and fp:sub(1, #prefix) == prefix then
+            paths[#paths + 1] = fp
+        end
+    end
+    _folder_book_paths_cache[path] = { paths = paths }
+    -- Return a copy so caller mutations don't poison the cache.
+    local out = {}
+    for i = 1, #paths do out[i] = paths[i] end
+    return out
+end
+
 -- _makeAllSort(sort_key): factory for the All-tab comparator. After v1.2
 -- this is a thin wrapper over SortEngine using Repo.getSortPriority("all")
 -- -- the sort_key argument is ignored. Kept for call-site compatibility;
@@ -1324,7 +1403,50 @@ end
 -- backward compatibility (Home folders unchanged). The legacy reverse +
 -- mixed settings apply only on the fallback path; when sort_priority is
 -- provided, each level carries its own direction and reverse is redundant.
-function Repo.getAll(path, limit, offset, sort_priority)
+-- _filterAllShapes(shapes, filter): produce a filter-aware shape list
+-- for getAll. Books are kept iff their status matches; folders are
+-- kept iff any book under them matches, with first_book_fp swapped to
+-- the first matching book under that path. Returns {shapes, total}.
+-- Returns the input shapes unchanged when filter is inactive — every
+-- call site can hand its full shape list to this helper unconditionally.
+local function _filterAllShapes(shapes, filter)
+    if not _filterIsActive(filter) then return shapes, #shapes end
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    local lfs_attr = ok_lfs and lfs and lfs.attributes or nil
+    local out = {}
+    for _i, shape in ipairs(shapes) do
+        if shape.kind == "book" then
+            local s = _statusForFp(shape.fp, lfs_attr)
+            if filter.statuses[s] then out[#out + 1] = shape end
+        elseif shape.kind == "folder" then
+            local fpaths = Repo.getFolderBookPaths(shape.path) or {}
+            local first_fp
+            for i = 1, #fpaths do
+                local s = _statusForFp(fpaths[i], lfs_attr)
+                if filter.statuses[s] then
+                    first_fp = fpaths[i]
+                    break
+                end
+            end
+            if first_fp then
+                -- Annotated copy: replace first_book_fp with the
+                -- filter-aware leader so the folder card cover shows a
+                -- book that actually matches the filter. Other fields
+                -- pass through unchanged. The original shape stays
+                -- intact in the cache.
+                out[#out + 1] = {
+                    kind          = "folder",
+                    path          = shape.path,
+                    label         = shape.label,
+                    first_book_fp = first_fp,
+                }
+            end
+        end
+    end
+    return out, #out
+end
+
+function Repo.getAll(path, limit, offset, sort_priority, filter)
     local _t0 = _gettime()
     offset = offset or 0
     -- Explicit `path` (folder drilldown) wins; fallback resolves the
@@ -1346,11 +1468,14 @@ function Repo.getAll(path, limit, offset, sort_priority)
     -- through SortEngine.chainedComparator(priority) below.
     local sort_key = (priority and priority[1] and priority[1].key)
                   or Repo.getSortKey("all")
-    -- reverse + mixed only apply on the fallback path; with a caller-supplied
-    -- priority, each level encodes its own reverse and the partition stays
-    -- folders-first (the natural choice when chip sort drives book order).
+    -- reverse only applies on the fallback path; chip sort_priority
+    -- encodes per-level reverse internally. `mixed` (folders interleaved
+    -- with files, instead of partitioned folders-first) follows
+    -- KOReader's global "Folders and files mixed" setting and applies
+    -- regardless of chip priority — the user's library-wide preference
+    -- should win over a per-chip partition choice.
     local reverse  = (not has_caller_priority) and BookshelfSettings.read("sort_all_reverse") == true
-    local mixed    = (not has_caller_priority) and BookshelfSettings.read("sort_all_mixed")   == true
+    local mixed    = G_reader_settings and G_reader_settings:isTrue("collate_mixed") or false
     -- Cache key includes a stable serialization of the priority so chips
     -- with different sort_priority don't collide on cached shapes.
     local prio_parts = {}
@@ -1367,12 +1492,14 @@ function Repo.getAll(path, limit, offset, sort_priority)
     local entry = _all_cache[cache_key]
     if entry and entry.expires_at > now then
         -- HIT: hydrate only the requested slice — skips BIM lookups for
-        -- every item outside the current page.
-        local total = #entry.shapes
+        -- every item outside the current page. When filter is active,
+        -- collapse the shape list to filter-passing entries first so
+        -- the slice maths against the visible total.
+        local shapes_for_slice, total = _filterAllShapes(entry.shapes, filter)
         local out   = {}
         local stop  = limit and math.min(offset + limit, total) or total
         for i = offset + 1, stop do
-            local shape = entry.shapes[i]
+            local shape = shapes_for_slice[i]
             if shape.kind == "folder" then
                 local fb = shape.first_book_fp and _safeBuildBookMeta(shape.first_book_fp)
                 out[#out + 1] = {
@@ -1537,6 +1664,39 @@ function Repo.getAll(path, limit, offset, sort_priority)
         for _i, e in ipairs(entries) do
             e._last_read = rh[e.fp] or 0
         end
+        -- Folder rows inherit the max read-time from any book somewhere
+        -- below them, so 'most recently opened' sorts a folder near its
+        -- contents instead of pinning every folder to the never-opened
+        -- tier. We could compute this by statting every .sdr underneath,
+        -- but ReadHistory already knows which books were opened recently
+        -- and where they live — a much smaller list to walk.
+        --
+        -- For each ReadHistory entry, walk its parent chain upward and
+        -- bump the first folder in our current listing that's an
+        -- ancestor of that file. Bounded by ReadHistory.hist size (~50)
+        -- times average path depth.
+        local folder_by_fp = {}
+        for _i, e in ipairs(entries) do
+            if e.attr and e.attr.mode == "directory" then
+                folder_by_fp[e.fp] = e
+            end
+        end
+        for _i, item in ipairs(ReadHistory.hist) do
+            local fp, t = item.file, item.time
+            if fp and t then
+                local parent = fp:match("^(.*)/[^/]+$")
+                while parent and parent ~= "" do
+                    local folder = folder_by_fp[parent]
+                    if folder then
+                        if (folder._last_read or 0) < t then
+                            folder._last_read = t
+                        end
+                        break
+                    end
+                    parent = parent:match("^(.*)/[^/]+$")
+                end
+            end
+        end
     end
     if needs.percent or needs.status then
         -- Route through Repo.readProgress so steady-state re-runs of this
@@ -1614,13 +1774,14 @@ function Repo.getAll(path, limit, offset, sort_priority)
             end
         end
     end
-    local total = #shapes
     _all_cache[cache_key] = { shapes = shapes, expires_at = now + WALK_CACHE_TTL }
     -- Hydrate the requested page slice exactly as the HIT path does.
+    -- Filter-aware: collapse to visible shapes first when active.
+    local shapes_for_slice, total = _filterAllShapes(shapes, filter)
     local out  = {}
     local stop = limit and math.min(offset + limit, total) or total
     for i = offset + 1, stop do
-        local shape = shapes[i]
+        local shape = shapes_for_slice[i]
         if shape.kind == "folder" then
             local fb = shape.first_book_fp and _safeBuildBookMeta(shape.first_book_fp)
             out[#out + 1] = {
@@ -1797,9 +1958,10 @@ local function _groupShapeCmp(priority_or_key)
     return SortEngine.chainedComparator(priority)
 end
 
-function Repo.getTags(limit, sort_priority_override)
+function Repo.getTags(limit, sort_priority_override, filter)
     local rc = getCollections()
     if not rc.coll then return {} end
+    local active = _filterIsActive(filter)
     local groups = {}
     for coll_name, files in pairs(rc.coll) do
         if coll_name ~= "favorites" then
@@ -1808,9 +1970,22 @@ function Repo.getTags(limit, sort_priority_override)
             for _file, item in pairs(files) do
                 local book = Repo.buildBookMeta(item.file or _file)
                 if book then
-                    books[#books + 1] = book
-                    local t = (item.attr and item.attr.access) or 0
-                    if t > latest then latest = t end
+                    -- When filter is active, only include books whose
+                    -- status matches. Live lookup; cached in
+                    -- _progress_cache so repeat tags with overlapping
+                    -- books reuse the read. Filter-inactive path pays
+                    -- nothing extra.
+                    local include = true
+                    if active then
+                        local _pct, status = Repo.readProgress(book.filepath)
+                        status = _normalizeStatus(status)
+                        include = filter.statuses[status] == true
+                    end
+                    if include then
+                        books[#books + 1] = book
+                        local t = (item.attr and item.attr.access) or 0
+                        if t > latest then latest = t end
+                    end
                 end
             end
             if #books > 0 then
@@ -1850,9 +2025,19 @@ end
 -- of a series"). Caching the shape (filepath list + sort metadata) and
 -- rebuilding Books on read keeps the cover_bb lifetime safe while still
 -- skipping the lfs walk + the sort/group pass.
-local function hydrateSeriesShape(shape)
+local function hydrateSeriesShape(shape, filter)
+    -- Filter the series's book list when a status filter is active.
+    -- An empty result → caller drops this series from the visible list.
+    local order = shape.filepaths
+    local meta  = shape.books_meta
+    if _filterIsActive(filter) and meta then
+        local filtered = _applyFilter(meta, filter)
+        if #filtered == 0 then return nil end
+        order = {}
+        for i = 1, #filtered do order[i] = filtered[i].filepath end
+    end
     local books = {}
-    for i, fp in ipairs(shape.filepaths) do
+    for i, fp in ipairs(order) do
         if i <= 1 then
             -- Full BIM hydration: cover_bb for the single front cover rendered
             -- by SeriesStack. Only one cover is visible per group on the shelf.
@@ -1871,7 +2056,7 @@ local function hydrateSeriesShape(shape)
     }
 end
 
-function Repo.getSeriesGroups(limit, offset, sort_priority_override)
+function Repo.getSeriesGroups(limit, offset, sort_priority_override, filter)
     local home  = G_reader_settings:readSetting("home_dir") or "/"
     local depth = BookshelfSettings.read("latest_walk_depth") or 3
     local key   = (home or "/") .. ":" .. tostring(depth or 0)
@@ -1886,14 +2071,18 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override)
         local _t0   = _gettime()
         local sk    = sort_priority_override or Repo.getSortPriority("series")
         local sorted = {}
-        for _i, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+        for _i, s in ipairs(cached.groups) do
+            if _shapeHasFilteredBook(s, filter) then
+                sorted[#sorted + 1] = s
+            end
+        end
         table.sort(sorted, _groupShapeCmp(sk))
         local total = #sorted
         local out   = {}
         offset      = offset or 0
         local stop  = math.min(offset + (limit or 8), total)
         for i = offset + 1, stop do
-            out[#out + 1] = hydrateSeriesShape(sorted[i])
+            out[#out + 1] = hydrateSeriesShape(sorted[i], filter)
         end
         logger.dbg(string.format("[bookshelf perf] getSeriesGroups: HIT hydrate=%.0fms groups=%d/%d",
             (_gettime() - _t0) * 1000, #out, total))
@@ -1963,10 +2152,21 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override)
     local shapes = {}
     for _i, group in ipairs(list) do
         local fps = {}
-        for _i, b in ipairs(group.books) do fps[#fps + 1] = b.filepath end
+        local books_meta = {}
+        for _i, b in ipairs(group.books) do
+            fps[#fps + 1] = b.filepath
+            -- Carry filepath + series_num so hydrate-time filter checks
+            -- (live readProgress, cached) can run against the same
+            -- structure as the other group kinds.
+            books_meta[#books_meta + 1] = {
+                filepath   = b.filepath,
+                series_num = b.series_num,
+            }
+        end
         shapes[#shapes + 1] = {
             series_name = group.series_name,
             filepaths   = fps,
+            books_meta  = books_meta,
             latest      = group.latest,
         }
     end
@@ -1977,14 +2177,16 @@ function Repo.getSeriesGroups(limit, offset, sort_priority_override)
     -- lifetime is identical regardless of cache state.
     local sk = sort_priority_override or Repo.getSortPriority("series")
     local sorted = {}
-    for _i, s in ipairs(shapes) do sorted[#sorted + 1] = s end
+    for _i, s in ipairs(shapes) do
+        if _shapeHasFilteredBook(s, filter) then sorted[#sorted + 1] = s end
+    end
     table.sort(sorted, _groupShapeCmp(sk))
 
     local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
-    for i = offset + 1, stop do out[#out + 1] = hydrateSeriesShape(sorted[i]) end
+    for i = offset + 1, stop do out[#out + 1] = hydrateSeriesShape(sorted[i], filter) end
     logger.dbg(string.format("[bookshelf perf] getSeriesGroups: MISS build=%.0fms cands=%d groups=%d/%d",
         (_gettime() - _t0) * 1000, #candidates, #out, total))
     return out, total
@@ -2005,9 +2207,108 @@ end
 -- Both share the same caching pattern as getSeriesGroups: cache the SHAPE
 -- (filepaths + sort metadata), rehydrate Books on read.
 
-local function _hydrateGroupShape(shape)
+-- _filterIsActive(filter): true when filter.statuses has at least one
+-- key set. nil filter / nil statuses / empty statuses → "no filter".
+_filterIsActive = function(filter)
+    if not filter or not filter.statuses then return false end
+    for _k in pairs(filter.statuses) do return true end
+    return false
+end
+
+-- _shapeHasFilteredBook(shape, filter): cheap "is this group visible
+-- under the active filter?" predicate. Short-circuits on first match.
+-- Returns true when filter is inactive (no-op). Used to drop empty
+-- groups before pagination so page counts stay sane.
+_shapeHasFilteredBook = function(shape, filter)
+    if not _filterIsActive(filter) then return true end
+    local meta = shape.books_meta
+    if not meta then return true end  -- transition-compat: nothing to test against
+    for i = 1, #meta do
+        local m = meta[i]
+        local s = m._status
+        if s == nil and m.filepath then
+            local _pct, status = Repo.readProgress(m.filepath)
+            s = _normalizeStatus(status)
+            m._status = s
+        end
+        if filter.statuses[s] then return true end
+    end
+    return false
+end
+
+-- _applyFilter(meta_list, filter): returns a new list containing only
+-- meta entries whose normalised status appears in filter.statuses.
+-- When an entry lacks `_status` (shape predates the build-time stash —
+-- transition compat for old in-memory caches not yet rebuilt),
+-- Repo.readProgress is called once and the result memoised on the
+-- entry to avoid repeat reads across consecutive filter passes.
+-- Callers should check _filterIsActive(filter) before invoking.
+_applyFilter = function(meta_list, filter)
+    if not meta_list then return {} end
+    local out = {}
+    for i = 1, #meta_list do
+        local m = meta_list[i]
+        local s = m._status
+        if s == nil and m.filepath then
+            local _pct, status = Repo.readProgress(m.filepath)
+            s = _normalizeStatus(status)
+            m._status = s
+        end
+        if filter.statuses[s] then out[#out + 1] = m end
+    end
+    return out
+end
+
+-- _withinPriority(sk): returns the level-2+ slice of a sort_priority,
+-- or nil when the chip only has a single level (no within-group rule).
+-- Used by every group hydrator to pick the cover that reflects the
+-- chip's secondary sort.
+local function _withinPriority(sk)
+    if not sk or #sk < 2 then return nil end
+    local out = {}
+    for i = 2, #sk do out[#out + 1] = sk[i] end
+    return out
+end
+
+-- within_priority (optional): the chip's sort_priority levels 2+. When
+-- supplied, books_meta is re-sorted by it so the leader's filepath
+-- becomes books[1] (the visible cover on the stack widget). The build-
+-- time order (series_name → series_index → title) is the fallback the
+-- shape was cached in; without this, a "Genres / book count then added"
+-- chip would still show the alphabetically-first cover, not the most-
+-- recently-added one.
+--
+-- Sorting is done on a copy so the cached shape's books_meta isn't
+-- mutated (the cache must stay stable across chips that share the same
+-- shape but differ in within-priority).
+local function _hydrateGroupShape(shape, within_priority, filter)
+    local meta = shape.books_meta
+    -- Filter (status-only today). Empty result → caller drops this group.
+    if _filterIsActive(filter) and meta then
+        meta = _applyFilter(meta, filter)
+        if #meta == 0 then return nil end
+    end
+    -- When filter is inactive, fall back to the cached shape filepaths
+    -- (no need to materialise meta for the unfiltered cover).
+    local order
+    if meta ~= shape.books_meta then
+        order = {}
+        for i = 1, #meta do order[i] = meta[i].filepath end
+    else
+        order = shape.filepaths
+    end
+    if within_priority and #within_priority > 0 and meta and #meta > 1 then
+        local SortEngine = require("lib/bookshelf_sort_engine")
+        local meta_copy = {}
+        for i = 1, #meta do meta_copy[i] = meta[i] end
+        SortEngine.sort(meta_copy, within_priority)
+        meta = meta_copy
+        local sorted_fps = {}
+        for i = 1, #meta_copy do sorted_fps[i] = meta_copy[i].filepath end
+        order = sorted_fps
+    end
     local books = {}
-    for i, fp in ipairs(shape.filepaths) do
+    for i, fp in ipairs(order) do
         if i <= 1 then
             -- Full BIM hydration: cover_bb for the single front cover rendered
             -- by SeriesStack. Only one cover is visible per group on the shelf.
@@ -2022,7 +2323,7 @@ local function _hydrateGroupShape(shape)
         kind         = shape.kind,
         series_name  = shape.series_name,
         books        = books,
-        books_meta   = shape.books_meta,  -- carried for drill-time re-sort
+        books_meta   = meta,  -- carried for drill-time re-sort
         latest       = shape.latest,
         latest_added = shape.latest_added,
     }
@@ -2059,6 +2360,32 @@ local function _normalizeGenre(s)
     end
     _normalize_genre_cache[s] = lower
     return lower
+end
+
+-- _normalizeStatus(s): map any raw KOReader status to the bookshelf
+-- vocabulary used by the chip-editor filter UI and the SortEngine.
+-- Repo.readProgress already maps "complete" → "finished" and
+-- "abandoned" → "on_hold"; here we additionally collapse the
+-- nil/"new" cases into "unread" so the filter set can key on a single
+-- canonical token per state.
+_normalizeStatus = function(s)
+    if s == nil or s == "new" then return "unread" end
+    return s
+end
+
+-- _statusForFp(fp, lfs_attr): canonical bookshelf status for a single
+-- filepath. Cheap-path checks for the .sdr sidecar first — a book
+-- without a sidecar has never been opened, so its status is "unread"
+-- without paying a DocSettings parse. The sidecar check uses
+-- lfs_attributes which is one stat call.
+_statusForFp = function(fp, lfs_attr)
+    if not fp then return "unread" end
+    if lfs_attr then
+        local sdr = fp:gsub("%.[^.]+$", "") .. ".sdr"
+        if lfs_attr(sdr, "mode") ~= "directory" then return "unread" end
+    end
+    local _pct, status = Repo.readProgress(fp)
+    return _normalizeStatus(status)
 end
 
 local function _buildGroups(group_kind, key_fn, multi)
@@ -2204,7 +2531,7 @@ local function _cacheGroupShapes(list, kind)
     return shapes
 end
 
-function Repo.getAuthors(limit, offset, sort_priority_override)
+function Repo.getAuthors(limit, offset, sort_priority_override, filter)
     local _t0 = _gettime()
     local home  = G_reader_settings:readSetting("home_dir") or "/"
     local depth = BookshelfSettings.read("latest_walk_depth") or 3
@@ -2232,22 +2559,25 @@ function Repo.getAuthors(limit, offset, sort_priority_override)
     -- the user's sort applies. Without it we'd hardcode the lookup to
     -- tab_id="authors" and miss any tab whose id is different.
     local sk = sort_priority_override or Repo.getSortPriority("authors")
+    local within = _withinPriority(sk)
     local sorted = {}
-    for _i, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+    for _i, s in ipairs(cached.groups) do
+        if _shapeHasFilteredBook(s, filter) then sorted[#sorted + 1] = s end
+    end
     table.sort(sorted, _groupShapeCmp(sk))
     local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do
-        out[#out + 1] = _hydrateGroupShape(sorted[i])
+        out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter)
     end
     logger.dbg(string.format("[bookshelf perf] getAuthors: %s %.0fms groups=%d/%d",
         _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total))
     return out, total
 end
 
-function Repo.getGenres(limit, offset, sort_priority_override)
+function Repo.getGenres(limit, offset, sort_priority_override, filter)
     local _t0 = _gettime()
     local home  = G_reader_settings:readSetting("home_dir") or "/"
     local depth = BookshelfSettings.read("latest_walk_depth") or 3
@@ -2269,15 +2599,18 @@ function Repo.getGenres(limit, offset, sort_priority_override)
     -- share the same cover_bb and the first to free it segfaults the
     -- second. This was the cause of the genres-tab crash on first tap.
     local sk = sort_priority_override or Repo.getSortPriority("genres")
+    local within = _withinPriority(sk)
     local sorted = {}
-    for _i, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+    for _i, s in ipairs(cached.groups) do
+        if _shapeHasFilteredBook(s, filter) then sorted[#sorted + 1] = s end
+    end
     table.sort(sorted, _groupShapeCmp(sk))
     local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do
-        out[#out + 1] = _hydrateGroupShape(sorted[i])
+        out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter)
     end
     logger.dbg(string.format("[bookshelf perf] getGenres: %s %.0fms groups=%d/%d",
         _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total))
@@ -2377,7 +2710,7 @@ local function _formatKey(fp)
     return ext:upper()
 end
 
-function Repo.getFormats(limit, offset, sort_priority_override)
+function Repo.getFormats(limit, offset, sort_priority_override, filter)
     local _t0 = _gettime()
     local home  = G_reader_settings:readSetting("home_dir") or "/"
     local depth = BookshelfSettings.read("latest_walk_depth") or 3
@@ -2397,15 +2730,18 @@ function Repo.getFormats(limit, offset, sort_priority_override)
     -- reuses Book records across groups, and shared cover_bb would segfault on
     -- the second free.
     local sk = sort_priority_override or Repo.getSortPriority("formats")
+    local within = _withinPriority(sk)
     local sorted = {}
-    for _i, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+    for _i, s in ipairs(cached.groups) do
+        if _shapeHasFilteredBook(s, filter) then sorted[#sorted + 1] = s end
+    end
     table.sort(sorted, _groupShapeCmp(sk))
     local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do
-        out[#out + 1] = _hydrateGroupShape(sorted[i])
+        out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter)
     end
     logger.dbg(string.format("[bookshelf perf] getFormats: %s %.0fms groups=%d/%d",
         _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total))
@@ -2496,7 +2832,7 @@ local function _buildRatingGroups()
     return groups
 end
 
-function Repo.getRatings(limit, offset, sort_priority_override)
+function Repo.getRatings(limit, offset, sort_priority_override, filter)
     local _t0 = _gettime()
     local home  = G_reader_settings:readSetting("home_dir") or "/"
     local depth = BookshelfSettings.read("latest_walk_depth") or 3
@@ -2513,15 +2849,18 @@ function Repo.getRatings(limit, offset, sort_priority_override)
         cached = _ratings_cache[key]
     end
     local sk = sort_priority_override or Repo.getSortPriority("ratings")
+    local within = _withinPriority(sk)
     local sorted = {}
-    for _i, s in ipairs(cached.groups) do sorted[#sorted + 1] = s end
+    for _i, s in ipairs(cached.groups) do
+        if _shapeHasFilteredBook(s, filter) then sorted[#sorted + 1] = s end
+    end
     table.sort(sorted, _groupShapeCmp(sk))
     local total = #sorted
     local out   = {}
     offset      = offset or 0
     local stop  = math.min(offset + (limit or 8), total)
     for i = offset + 1, stop do
-        out[#out + 1] = _hydrateGroupShape(sorted[i])
+        out[#out + 1] = _hydrateGroupShape(sorted[i], within, filter)
     end
     logger.dbg(string.format("[bookshelf perf] getRatings: %s %.0fms groups=%d/%d",
         _hit and "HIT" or "MISS", (_gettime() - _t0) * 1000, #out, total))
@@ -2861,9 +3200,13 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit)
     -- (all / recent / latest / favorites), don't take the early-return
     -- path -- the built-in fetchers don't honour the filter. Fall
     -- through to the predicate-based path below which applies it
-    -- uniformly. Group kinds (series/authors/genres/tags/formats/
-    -- ratings) ARE early-returned because the filter is per-book and
-    -- a group view returns groups, not books.
+    -- uniformly.
+    --
+    -- Group kinds (series/authors/genres/tags/formats/ratings) now
+    -- accept a `filter` argument and apply it natively (Phase 1 of the
+    -- filter-applies-to-groups feature). Empty groups are elided pre-
+    -- pagination; covers and per-stack stats reflect the filtered set
+    -- where appropriate. Folder cards through Repo.getAll do the same.
     --
     -- sort_priority gate for the legacy book-list fetchers: they use a
     -- single-key sort_<chip> setting with a small whitelist (date_added /
@@ -2890,13 +3233,19 @@ function Repo.getBySource(source, filter, sort_priority, offset, limit)
             if kind == "latest"    then return Repo.getLatest(limit, offset)       end
             if kind == "favorites" then return Repo.getFavorites(limit, offset)    end
         end
+    else
+        -- Folder views with an active status filter still produce folder
+        -- cards, but only those with at least one matching book. getAll
+        -- handles the filter natively below (see Phase 1 work).
+        if kind == "all"    then return Repo.getAll(nil, limit, offset, sort_priority, filter)       end
+        if kind == "folder" then return Repo.getAll(source.id, limit, offset, sort_priority, filter) end
     end
-    if kind == "series"    then return Repo.getSeriesGroups(limit, offset, sort_priority) end
-    if kind == "authors"   then return Repo.getAuthors(limit, offset, sort_priority)      end
-    if kind == "genres"    then return Repo.getGenres(limit, offset, sort_priority)       end
-    if kind == "tags"      then return Repo.getTags(limit, sort_priority)                 end
-    if kind == "formats"   then return Repo.getFormats(limit, offset, sort_priority)      end
-    if kind == "ratings"   then return Repo.getRatings(limit, offset, sort_priority)      end
+    if kind == "series"    then return Repo.getSeriesGroups(limit, offset, sort_priority, filter) end
+    if kind == "authors"   then return Repo.getAuthors(limit, offset, sort_priority, filter)      end
+    if kind == "genres"    then return Repo.getGenres(limit, offset, sort_priority, filter)       end
+    if kind == "tags"      then return Repo.getTags(limit, sort_priority, filter)                 end
+    if kind == "formats"   then return Repo.getFormats(limit, offset, sort_priority, filter)      end
+    if kind == "ratings"   then return Repo.getRatings(limit, offset, sort_priority, filter)      end
 
     -- Custom kinds: walk the library and apply a predicate filter.
     -- Results are cached by (source, filter, sort_priority) so pagination
