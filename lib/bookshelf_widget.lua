@@ -1982,8 +1982,13 @@ end
 -- ─── Data helpers ─────────────────────────────────────────────────────────────
 
 -- _fetchChipItems(n)
--- Returns up to n items for the current chip (or the expanded-series flat list).
+-- Returns up to n items for the current chip (or the expanded-series flat
+-- list). Sets opts.lazy_cover=true on the Repo call so the HIT hydration
+-- path probes ScaledCoverCache per filepath and skips the BIM zstd decode
+-- for books already cached. SpineWidget reads from the cache directly when
+-- book.cover_bb arrives nil.
 function BookshelfWidget:_fetchChipItems(n)
+    local fetch_opts = { lazy_cover = true }
     -- Drill-down: when the path tip is a series, show that series' books
     -- as flat spine widgets. Rebuild from filepaths so each render gets
     -- a fresh cover_bb — the cached Book objects on .books had their
@@ -2081,12 +2086,12 @@ function BookshelfWidget:_fetchChipItems(n)
             within = {}
             for i = 2, #sp do within[#within + 1] = sp[i] end
         end
-        return Repo.getAll(tip.payload.path, LIMIT, offset, within)
+        return Repo.getAll(tip.payload.path, LIMIT, offset, within, nil, fetch_opts)
     end
     if tab then
-        return Repo.getBySource(tab.source, tab.filter, tab.sort_priority, offset, LIMIT)
+        return Repo.getBySource(tab.source, tab.filter, tab.sort_priority, offset, LIMIT, fetch_opts)
     end
-    return Repo.getBySource({ kind = self.chip }, nil, nil, offset, LIMIT)
+    return Repo.getBySource({ kind = self.chip }, nil, nil, offset, LIMIT, fetch_opts)
 end
 
 -- _chipLabel()  — human-readable shelf heading for the active chip.
@@ -2104,12 +2109,69 @@ end
 
 -- Per-rebuild device state cache. Hardware/sysfs reads (PowerD frontlight,
 -- isCharging, /proc/self/status) fire on every hero build and every preview
--- tap — way faster than the user can perceive a stale clock or battery
--- digit. The TTL caps how often we touch hardware; a 2s window is short
--- enough that the clock minute and battery percent stay current.
-local _device_state_cache = nil
+-- tap; without caching, real-device measurement shows the fan-out costs
+-- ~30–50ms per hero build (frontlight probe ×3 + diskUsage statfs +
+-- calcFreeMem + /proc/self/status + isCharging + getCapacity + isWifiOn).
+--
+-- Two-tier TTLs:
+--
+--   * Fast state (5s): light, light_pct, warmth, batt, charging, wifi.
+--     Frontlight is gesture-toggleable in mid-browsing; 5s keeps it
+--     responsive while catching consecutive chip switches (typical 2-4s
+--     apart) that the previous 2s window kept missing.
+--
+--   * Slow state (60s): mem, ram_mib, disk_free. Disk usage is the
+--     heaviest single probe (statfs) and the slowest-changing value —
+--     a 1-minute resolution on a 0.1G-precision display is invisible.
+--     RSS and free-mem drift on the order of MiB per minute during
+--     normal browsing.
+--
+-- Both tiers share the same returned table; the fast tier rebuilds the
+-- volatile fields and reuses the slow tier's already-resolved values
+-- when its TTL hasn't expired.
+local _device_state_cache      = nil
 local _device_state_expires_at = 0
-local DEVICE_STATE_TTL = 2  -- seconds
+local DEVICE_STATE_TTL         = 5     -- seconds — fast hardware
+
+local _device_slow_cache       = nil   -- { mem, ram_mib, disk_free }
+local _device_slow_expires_at  = 0
+local DEVICE_SLOW_TTL          = 60    -- seconds — disk + memory
+
+local function _readSlowState(now)
+    if _device_slow_cache and _device_slow_expires_at > now then
+        return _device_slow_cache
+    end
+    local out = {}
+    local ok_util, util = pcall(require, "util")
+    if ok_util and util and util.calcFreeMem then
+        local free, total = util.calcFreeMem()
+        if free and total and total > 0 then
+            out.mem = math.floor((1 - free / total) * 100 + 0.5)
+        end
+    end
+    -- Single read + one match instead of fh:lines() (which allocates a
+    -- string per line and walks ~25 lines before VmRSS).
+    local fh = io.open("/proc/self/status", "r")
+    if fh then
+        local content = fh:read("*a") or ""
+        fh:close()
+        local kb = content:match("VmRSS:%s+(%d+)%s+kB")
+        if kb then out.ram_mib = math.floor(tonumber(kb) / 1024 + 0.5) end
+    end
+    if ok_util and util and util.diskUsage then
+        local ok_dev, Device = pcall(require, "device")
+        if ok_dev and Device then
+            local drive = Device.home_dir or "/"
+            local ok_du, usage = pcall(util.diskUsage, drive)
+            if ok_du and usage and type(usage.available) == "number" and usage.available > 0 then
+                out.disk_free = string.format("%.1fG", usage.available / 1024 / 1024 / 1024)
+            end
+        end
+    end
+    _device_slow_cache      = out
+    _device_slow_expires_at = now + DEVICE_SLOW_TTL
+    return out
+end
 
 function BookshelfWidget:_buildDeviceState()
     local now = os.time()
@@ -2160,36 +2222,7 @@ function BookshelfWidget:_buildDeviceState()
             if ok then warmth = v end
         end
     end
-    -- Memory stats. util.calcFreeMem returns (free_bytes, total_bytes).
-    -- Our process RSS comes from /proc/self/status on Linux/Kindle.
-    local mem_pct, ram_mib
-    local ok_util, util = pcall(require, "util")
-    if ok_util and util and util.calcFreeMem then
-        local free, total = util.calcFreeMem()
-        if free and total and total > 0 then
-            mem_pct = math.floor((1 - free / total) * 100 + 0.5)
-        end
-    end
-    -- Single read + one match instead of fh:lines() (which allocates a
-    -- string per line and walks ~25 lines before VmRSS).
-    local fh = io.open("/proc/self/status", "r")
-    if fh then
-        local content = fh:read("*a") or ""
-        fh:close()
-        local kb = content:match("VmRSS:%s+(%d+)%s+kB")
-        if kb then ram_mib = math.floor(tonumber(kb) / 1024 + 0.5) end
-    end
-    local disk_free
-    if ok_util and util and util.diskUsage then
-        local ok_dev, Device = pcall(require, "device")
-        if ok_dev and Device then
-            local drive = Device.home_dir or "/"
-            local ok_du, usage = pcall(util.diskUsage, drive)
-            if ok_du and usage and type(usage.available) == "number" and usage.available > 0 then
-                disk_free = string.format("%.1fG", usage.available / 1024 / 1024 / 1024)
-            end
-        end
-    end
+    local slow = _readSlowState(now)
     _device_state_cache = {
         now      = now,
         batt     = (ok_pd and PowerD and PowerD.getCapacity)
@@ -2201,9 +2234,9 @@ function BookshelfWidget:_buildDeviceState()
         light    = light,
         light_pct= light_pct,
         warmth   = warmth,
-        mem      = mem_pct,
-        ram_mib  = ram_mib,
-        disk_free= disk_free,
+        mem      = slow.mem,
+        ram_mib  = slow.ram_mib,
+        disk_free= slow.disk_free,
     }
     _device_state_expires_at = now + DEVICE_STATE_TTL
     return _device_state_cache

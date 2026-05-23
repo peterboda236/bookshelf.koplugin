@@ -10,13 +10,35 @@
 -- alongside the decision logic so SpineWidget has a single require to
 -- pull in everything it needs.
 
+local Blitbuffer        = require("ffi/blitbuffer")
+local Device            = require("device")
+local Font              = require("ui/font")
+local FrameContainer    = require("ui/widget/container/framecontainer")
+local Geom              = require("ui/geometry")
+local OverlapGroup      = require("ui/widget/overlapgroup")
+local TextWidget        = require("ui/widget/textwidget")
+local Widget            = require("ui/widget/widget")
+local ffi               = require("ffi")
 local BookshelfSettings = require("lib/bookshelf_settings_store")
+local Colour            = require("lib/bookshelf_colour")
+
+local ColorRGB32_t      = ffi.typeof("ColorRGB32")
+local Screen            = Device.screen
 
 local M = {}
 
 -- Glyph code points (KOReader's bundled nerd font).
 M.GLYPH_BOOKMARK       = "\u{e7bf}"  -- in-progress
 M.GLYPH_BOOKMARK_CHECK = "\u{e7c0}"  -- finished
+
+-- Cover-badge font scale. Single source of truth for the page-count
+-- pill, series-number pill, ×N count badge, and completed-tickbox
+-- glyph. Read inline (not memoised) so settings menu nudge dialogs see
+-- the new value on the next paint without a require cycle.
+function M.badgeSize(base)
+    local scale = BookshelfSettings.read("cover_badge_font_scale") or 100
+    return math.floor(base * scale / 100 + 0.5)
+end
 
 -- Read a per-element toggle. All three default ON (true) when unset.
 -- Setting keys (within the bookshelf settings store):
@@ -43,15 +65,11 @@ local _Repo
 --   page_count is independent of status -- the page total is meaningful
 --   for any book the user might browse, not just one that's been opened.
 function M.decide(book)
-    local want_page_count = _toggle("progress_page_count_enabled") == true
-    -- Default for the new page_count toggle is OFF, distinct from the
-    -- other three indicators (which default ON). Reads from the same
-    -- _toggle helper but `_toggle` returns true on nil; we need false.
-    -- Override the default explicitly via direct read.
-    do
-        local raw = BookshelfSettings.read("progress_page_count_enabled")
-        want_page_count = raw == true
-    end
+    -- progress_page_count_enabled defaults OFF, distinct from the other
+    -- three indicators which default ON via _toggle. _toggle returns true
+    -- on nil — wrong default here — so read the raw value and only treat
+    -- an explicit `true` as on.
+    local want_page_count = BookshelfSettings.read("progress_page_count_enabled") == true
     local none = { bar = false, bar_pct = 0, glyph = nil, page_count = want_page_count }
     if not book then return none end
     local status = book.status
@@ -133,13 +151,6 @@ end
 -- Widget: ProgressBarWidget
 -- ---------------------------------------------------------------------------
 
-local Widget         = require("ui/widget/widget")
-local Geom           = require("ui/geometry")
-local _BlitbufferBar = require("ffi/blitbuffer")
-local _ScreenBar     = require("device").screen
-local ffi            = require("ffi")
-local ColorRGB32_t   = ffi.typeof("ColorRGB32")
-
 -- Blitbuffer's plain paintRoundedRect / paintBorder flatten their colour
 -- argument to luminance via getColor8() before painting, so a ColorRGB32
 -- like red goes down as its grey luminance on a colour buffer. KOReader
@@ -182,12 +193,12 @@ function ProgressBarWidget:paintTo(bb, x, y)
     -- fill is a smaller pill whose right edge moves with progress.
     local w, h = self.width, self.height
     if w < 1 or h < 1 then return end
-    local border = math.max(1, _ScreenBar:scaleBySize(1))
+    local border = math.max(1, Screen:scaleBySize(1))
     local radius = math.floor(h / 2)
     -- 1. Track background (rounded rect, full bar)
     _paintRoundedRect(bb, x, y, w, h, self.track, radius)
     -- 2. Dark border outlining the track
-    _paintBorder(bb, x, y, w, h, border, _BlitbufferBar.COLOR_BLACK, radius)
+    _paintBorder(bb, x, y, w, h, border, Blitbuffer.COLOR_BLACK, radius)
     -- 3. Inner fill (rounded), inset by border + padding, width scales with pct
     local clamped = self.pct
     if clamped < 0 then clamped = 0 end
@@ -221,12 +232,6 @@ end
 -- Widget: GlyphWidget (status indicator)
 -- ---------------------------------------------------------------------------
 
-local TextWidget      = require("ui/widget/textwidget")
-local Font            = require("ui/font")
-local Blitbuffer      = require("ffi/blitbuffer")
-local OverlapGroup    = require("ui/widget/overlapgroup")
-local CenterContainer = require("ui/widget/container/centercontainer")
-
 -- Build a single-glyph TextWidget for the in-progress / finished badges.
 -- @param glyph_char  one of GLYPH_BOOKMARK / GLYPH_BOOKMARK_CHECK
 -- @param size        target glyph height in pixels (already scaled)
@@ -255,7 +260,6 @@ function M.buildOutlinedGlyphWidget(glyph_char, size, halo_w, halo_color, centre
     centre_color = centre_color or Blitbuffer.COLOR_WHITE
     local widget_w = size + 2 * halo_w
     local widget_h = size + 2 * halo_w
-    local FrameContainer = require("ui/widget/container/framecontainer")
     local group = OverlapGroup:new{
         dimen = Geom:new{ w = widget_w, h = widget_h },
     }
@@ -288,9 +292,6 @@ end
 -- Resolved-settings accessor
 -- ---------------------------------------------------------------------------
 
-local Colour   = require("lib/bookshelf_colour")
-local Device   = require("device")
-
 local DEFAULT_FILL     = { grey = 0x40 }
 -- Track defaults to pure white so the bar stays clearly distinct from
 -- the cover's drop shadow (mid-grey) on monochrome devices.
@@ -306,20 +307,35 @@ local DEFAULT_BOOKMARK = { grey = 0x40 }
 local DEFAULT_BADGE_FG = { grey = 0x00 }
 local DEFAULT_BADGE_BG = { grey = 0xFF }
 
--- Returns colour values resolved to Blitbuffer objects for the current
--- screen mode. Called per cover paint; relies on bookshelf_colour's
--- internal hex cache to keep the work cheap.
+-- Memoised resolvers. resolvedColours() is called multiple times per
+-- cover paint (once per active indicator type per cover), and each call
+-- used to do seven BookshelfSettings.reads + five parseColorValue calls
+-- + a fresh table allocation. With a 20-cover grid that's ~100+ rebuilds
+-- per repaint of an unchanged setting state. Cache keyed on:
+--
+--   * settings generation (bumped by BookshelfSettings.save / .delete)
+--   * Screen:isColorEnabled() (hex resolves differently under colour vs
+--     greyscale; the parseColorValue hex cache also self-flushes on
+--     mode change, but we have to invalidate too or we'd return a
+--     ColorRGB32 on a now-greyscale screen)
+--
+-- Returned tables are SHARED, not freshly allocated — callers must not
+-- mutate them. Every current consumer is read-only.
 --
 -- folder_bg / folder_fg differ from the other fields: they return nil
 -- when the setting is unset so the FolderCard render path can fall back
 -- to its existing device-aware defaults (manilla on colour panels, dark
 -- grey on B&W e-ink, see lib/bookshelf_folder_card.lua's CARDBOARD
--- constant). A static hex default here can't represent that split, and
--- mapping it through parseColorValue's Rec.601 luminance fold would land
--- B&W users on light grey (~0xCE) instead of the dark grey they have
--- today.
+-- constant). A static hex default here can't represent that split.
+local _resolved_cache, _resolved_gen, _resolved_mode
+local _raw_cache, _raw_gen
+
 function M.resolvedColours()
-    local is_colour    = Device.screen:isColorEnabled()
+    local gen      = BookshelfSettings.generation()
+    local is_colour = Screen:isColorEnabled()
+    if _resolved_cache and _resolved_gen == gen and _resolved_mode == is_colour then
+        return _resolved_cache
+    end
     local fill_raw     = BookshelfSettings.read("progress_fill")  or DEFAULT_FILL
     local track_raw    = BookshelfSettings.read("progress_track") or DEFAULT_TRACK
     local bookmark_raw = BookshelfSettings.read("bookmark_color") or DEFAULT_BOOKMARK
@@ -327,7 +343,7 @@ function M.resolvedColours()
     local badge_bg_raw = BookshelfSettings.read("badge_bg")       or DEFAULT_BADGE_BG
     local folder_bg_raw = BookshelfSettings.read("folder_overlay_bg")
     local folder_fg_raw = BookshelfSettings.read("folder_overlay_fg")
-    return {
+    _resolved_cache = {
         fill      = Colour.parseColorValue(fill_raw,     is_colour),
         track     = Colour.parseColorValue(track_raw,    is_colour),
         bookmark  = Colour.parseColorValue(bookmark_raw, is_colour),
@@ -336,14 +352,22 @@ function M.resolvedColours()
         folder_bg = folder_bg_raw and Colour.parseColorValue(folder_bg_raw, is_colour) or nil,
         folder_fg = folder_fg_raw and Colour.parseColorValue(folder_fg_raw, is_colour) or nil,
     }
+    _resolved_gen  = gen
+    _resolved_mode = is_colour
+    return _resolved_cache
 end
 
--- Returns the raw setting values (storage shape, not Blitbuffer). For the
--- settings menu's "currently set to..." label rendering. Folder colours
--- return the raw value or nil (no static default) so the menu's
--- valueLabel helper can show "default" when unset.
+-- Returns the raw setting values (storage shape, not Blitbuffer). For
+-- the settings menu's "currently set to..." label rendering. Folder
+-- colours return the raw value or nil (no static default) so the menu's
+-- valueLabel helper can show "default" when unset. Memoised on the same
+-- generation counter as resolvedColours().
 function M.rawColours()
-    return {
+    local gen = BookshelfSettings.generation()
+    if _raw_cache and _raw_gen == gen then
+        return _raw_cache
+    end
+    _raw_cache = {
         fill      = BookshelfSettings.read("progress_fill")  or DEFAULT_FILL,
         track     = BookshelfSettings.read("progress_track") or DEFAULT_TRACK,
         bookmark  = BookshelfSettings.read("bookmark_color") or DEFAULT_BOOKMARK,
@@ -357,6 +381,8 @@ function M.rawColours()
         badge_fg_default = DEFAULT_BADGE_FG,
         badge_bg_default = DEFAULT_BADGE_BG,
     }
+    _raw_gen = gen
+    return _raw_cache
 end
 
 return M
