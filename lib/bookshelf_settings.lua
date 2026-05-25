@@ -1527,11 +1527,15 @@ end
 -- configurable at all. Bringing them under one Settings menu makes the
 -- "where do I dial X smaller?" question single-answer.
 function Settings:_textSizeSubItems()
-    local function row(label_key, setting_key, default, pick_fn)
+    -- Labels are pre-translated at call time (each menu open). Going
+    -- through `row(_("..."), ...)` instead of `row("...", ...)` so
+    -- xgettext sees the literal strings -- dynamic `_(label_key)` in
+    -- text_func would not be picked up by extraction.
+    local function row(label, setting_key, default, pick_fn)
         return {
             text_func = function()
                 local v = BookshelfSettings.read(setting_key, default)
-                return _(label_key) .. ": " .. tostring(v) .. "%"
+                return label .. ": " .. tostring(v) .. "%"
             end,
             keep_menu_open = true,
             callback = function(touchmenu_instance)
@@ -1540,11 +1544,11 @@ function Settings:_textSizeSubItems()
         }
     end
     return {
-        row("Hero card",              "font_scale",                100, "_pickFontScale"),
-        row("Chip bar",               "chip_font_scale",           100, "_pickChipFontScale"),
-        row("Stack & folder labels",  "stack_label_font_scale",    100, "_pickStackLabelFontScale"),
-        row("Expanded shelf labels",  "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),
-        row("Cover badges",           "cover_badge_font_scale",    100, "_pickCoverBadgeFontScale"),
+        row(_("Hero card"),             "font_scale",                100, "_pickFontScale"),
+        row(_("Chip bar"),              "chip_font_scale",           100, "_pickChipFontScale"),
+        row(_("Stack & folder labels"), "stack_label_font_scale",    100, "_pickStackLabelFontScale"),
+        row(_("Expanded shelf labels"), "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),
+        row(_("Cover badges"),          "cover_badge_font_scale",    100, "_pickCoverBadgeFontScale"),
     }
 end
 
