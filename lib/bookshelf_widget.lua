@@ -5630,6 +5630,10 @@ end
 function BookshelfWidget:_maybeStartChipPreload()
     if self._chip_preload_done then return end
     if self._chip_preload_fn then return end  -- already in flight
+    -- v2.3.1 defensive: the always-on background preload is implicated in an
+    -- Android crash (reported post-v2.3.0). Skip it on Android until the root
+    -- cause is pinned; e-ink devices keep the warm-up.
+    if Device:isAndroid() then return end
     if #(self._drilldown_path or {}) ~= 0 then return end
     self:_applyCoverCacheCapacity()
     self._chip_preload_fn = function() self:_chipPreloadStep() end
@@ -5705,6 +5709,11 @@ end
 
 function BookshelfWidget:_startFilePoll()
     if self._file_poll_fn then return end   -- already polling
+    -- v2.3.1 defensive: the periodic file-poll is the other new always-on
+    -- background task in v2.3.0; skip it on Android alongside the preload
+    -- until the crash is root-caused. Sideloaded-book auto-detect pauses on
+    -- Android only (manual swipe-down refresh still works).
+    if Device:isAndroid() then return end
     -- Establish baseline so the first tick doesn't false-positive on
     -- the very mtimes we'll be comparing against.
     self._home_dir_mtimes = _snapshotHomeDirs()
@@ -5774,6 +5783,7 @@ end
 function BookshelfWidget:_schedulePreload(direction)
     self:_cancelPreload()
     self:_applyCoverCacheCapacity()
+    if Device:isAndroid() then return end  -- v2.3.1 crash defence; see _maybeStartChipPreload
     self._preload_dir = direction
     self._preload_fn = function() self:_preloadStep() end
     UIManager:scheduleIn(PRELOAD_START_DELAY_S, self._preload_fn)
