@@ -857,12 +857,22 @@ function BookshelfWidget:_rebuild()
     local hero_cover_w_natural = math.floor(content_w * 0.30)
     local hero_cover_h_natural = math.floor(hero_cover_w_natural * 1.5)
 
-    -- Natural shelf row dimensions: n_cols covers fill content_w with PAD
-    -- gaps, preserving the 2:3 cover aspect ratio. Used in BOTH modes so
-    -- cover size doesn't shift between expanded / collapsed — the hero is
-    -- the only element that flexes. Pagination y stays fixed.
+    -- Natural shelf row dimensions: n_cols covers fill content_w with the
+    -- inter-cover gap, preserving the 2:3 cover aspect ratio. n_cols is the
+    -- same in both modes; the only per-mode difference is the gap (book_gap
+    -- below), so covers are a touch larger in collapsed mode and natural in
+    -- expanded. Pagination y stays fixed within a mode.
     local n_cols         = self:_nCols()
-    local slot_w_natural = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
+    -- book_gap tightens the inter-cover gap at the "small" bookshelf size so
+    -- covers render a touch larger; full PAD at other sizes. Used for the
+    -- shelf-row layout + cover spec only -- outer/inter-row PAD is unchanged.
+    -- Applied in BOTH modes. The expanded row COUNT (_maxRows) deliberately
+    -- stays on full PAD, so a wider book_gap cover doesn't cost a row: instead
+    -- it's filled into the (full-PAD-budgeted) slot, which is a touch shorter
+    -- than the cover's natural 2:3 -- i.e. covers come out wider and slightly
+    -- vertically compressed rather than dropping the bottom row.
+    local book_gap       = self:_bookGap(PAD)
+    local slot_w_natural = math.floor((content_w - book_gap * (n_cols - 1)) / n_cols)
     local slot_h_natural = math.floor(slot_w_natural * 1.5)
 
     -- Vertical layout (outer-top to outer-bottom):
@@ -1477,7 +1487,7 @@ function BookshelfWidget:_rebuild()
         return
     end
 
-    local rows = self:_buildShelfRows(items, content_w, shelf_h, PAD, n_shelves)
+    local rows = self:_buildShelfRows(items, content_w, shelf_h, book_gap, n_shelves)
     local _perf_t3 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _rebuild: shelves=%.0fms",
         (_perf_t3 - _perf_t2) * 1000))
@@ -1487,8 +1497,9 @@ function BookshelfWidget:_rebuild()
     -- inner_vgroup.
 
     -- Kick off BIM extraction for any displayed books with no cached
-    -- metadata. Cover-spec dims = single shelf slot.
-    local slot_w  = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
+    -- metadata. Cover-spec dims = single shelf slot (book_gap so the
+    -- extracted cover matches the rendered, slightly-larger small-size slot).
+    local slot_w  = math.floor((content_w - book_gap * (n_cols - 1)) / n_cols)
     local slot_h  = math.floor(slot_w * 1.5)
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, hero_cover_w, hero_cover_h)
 
@@ -1629,6 +1640,7 @@ function BookshelfWidget:_rebuild()
         FOOTER_H             = FOOTER_H,
         FOOTER_BOTTOM_MARGIN = FOOTER_BOTTOM_MARGIN,
         PAD                  = PAD,
+        book_gap             = book_gap,
         hero_cover_w         = hero_cover_w,
         hero_cover_h         = hero_cover_h,
         n_shelves            = n_shelves,
@@ -3418,7 +3430,7 @@ function BookshelfWidget:_swapShelvesInPlace()
         local clamp_to = last_real > 0 and last_real or 1
         if self._cursor_idx > clamp_to then self._cursor_idx = clamp_to end
     end
-    local rows = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.PAD, 2)
+    local rows = self:_buildShelfRows(items, d.content_w, d.shelf_h, d.book_gap or d.PAD, 2)
     local row_top, row_bottom = rows[1], rows[2]
     local _perf_t2 = _gettime()
     logger.dbg(string.format("[bookshelf perf] _swapShelves: shelves=%.0fms",
@@ -3437,7 +3449,7 @@ function BookshelfWidget:_swapShelvesInPlace()
     -- cached yet. Same slot + hero dims as _rebuild's call so both
     -- consumers get a single cached cover sized for the bigger of the two.
     local n_slots = self:_nCols()
-    local slot_w  = math.floor((d.content_w - d.PAD * (n_slots - 1)) / n_slots)
+    local slot_w  = math.floor((d.content_w - (d.book_gap or d.PAD) * (n_slots - 1)) / n_slots)
     local slot_h  = math.floor(slot_w * 1.5)
     self:_kickOffMissingMetaExtraction(items, slot_w, slot_h, d.hero_cover_w, d.hero_cover_h)
 
@@ -5095,6 +5107,22 @@ local function _readHeroSize()
     return "regular"  -- absorbs legacy "small"/"medium" and missing value
 end
 
+-- _bookGap(pad) — horizontal gap BETWEEN covers in a shelf row. The "small"
+-- bookshelf size tightens the standard padding here to 0.75x (only the
+-- inter-cover gap; outer margins and inter-row spacing keep the full pad) so
+-- the otherwise-small covers reclaim a little of that space and render a
+-- touch larger. The column count (_nCols) deliberately stays on the full
+-- pad, so this widens each cover rather than fitting more of them. Must be a
+-- method: _rebuild / _maxRows / _swapShelvesInPlace are defined earlier in
+-- the file and reach it via the metatable, which a module-local declared
+-- here wouldn't allow.
+function BookshelfWidget:_bookGap(pad)
+    if _readCoverSize() == "small" then
+        return math.max(1, math.floor(pad * 0.75))
+    end
+    return pad
+end
+
 -- _maxRows() — max natural-cover rows that fit at the current n_cols
 -- assuming the hero collapses to its minimum (status strip only). Used
 -- as the expanded-mode row count and as the ceiling _baseShelves works
@@ -5103,6 +5131,12 @@ function BookshelfWidget:_maxRows()
     local PAD, content_w, chip_h, footer_h = self:_layoutPrimitives()
     local n_cols = self:_nCols()
     if n_cols < 1 then return 1 end
+    -- Row-count budget uses the FULL pad, not _bookGap: this is the natural
+    -- "how many 2:3 cover rows fit" ceiling. The render fills covers at the
+    -- (wider) book_gap width into these full-PAD-budgeted rows, so a tighter
+    -- gap yields slightly compressed covers rather than dropping a row.
+    -- Computing the budget on book_gap instead inflated slot_h and silently
+    -- cost an expanded row.
     local slot_w = math.floor((content_w - PAD * (n_cols - 1)) / n_cols)
     if slot_w < 1 then return 1 end
     local slot_h = math.floor(slot_w * 1.5)
