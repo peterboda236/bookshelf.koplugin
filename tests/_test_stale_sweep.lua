@@ -32,29 +32,49 @@ package.loaded["libs/libkoreader-lfs"] = {
 -- ljsqlite3 stub: open returns a fake connection whose rows() iterator
 -- walks a table set by the test.
 _G._test_db_rows = {}
+-- ljsqlite3 stub: open returns a fake connection whose prepare() returns
+-- a fake statement whose rows() iterator walks _test_db_rows. Mirrors
+-- ljsqlite3's actual API where rows() lives on the statement, not the
+-- connection.
 package.loaded["lua-ljsqlite3/init"] = {
     open = function(_path)
         return {
-            rows = function(_self, _sql)
-                local i = 0
-                return function()
-                    i = i + 1
-                    local r = _G._test_db_rows[i]
-                    if not r then return nil end
-                    return { r.directory, r.filename, r.filemtime, r.filesize }
-                end
+            prepare = function(_self, _sql)
+                return {
+                    rows = function(_self2)
+                        local i = 0
+                        return function()
+                            i = i + 1
+                            local r = _G._test_db_rows[i]
+                            if not r then return nil end
+                            return { r.directory, r.filename, r.filemtime, r.filesize }
+                        end
+                    end,
+                    close = function() end,
+                }
             end,
             close = function() end,
         }
     end,
 }
--- BIM stub records which paths got deleted.
+-- BIM stub records deletes + exec calls (so we can verify BEGIN/COMMIT
+-- are issued around the delete loop). openDbConnection is a no-op; the
+-- sweep just needs BIM.db_conn to exist for the transaction wrap.
 _G._test_bim_deleted = {}
-package.loaded["bookinfomanager"] = {
+_G._test_bim_execs = {}
+local _bim_stub
+_bim_stub = {
+    db_conn = {
+        exec = function(_self, sql)
+            _G._test_bim_execs[#_G._test_bim_execs + 1] = sql
+        end,
+    },
+    openDbConnection = function(_self) end,
     deleteBookInfo = function(_self, fp)
         _G._test_bim_deleted[#_G._test_bim_deleted + 1] = fp
     end,
 }
+package.loaded["bookinfomanager"] = _bim_stub
 -- ScaledCoverCache stub records which paths got dropped.
 _G._test_scc_dropped = {}
 package.loaded["lib/bookshelf_scaled_cover_cache"] = {
@@ -68,6 +88,7 @@ local function reset()
     _G._test_files = {}
     _G._test_db_rows = {}
     _G._test_bim_deleted = {}
+    _G._test_bim_execs = {}
     _G._test_scc_dropped = {}
     -- Re-require so module-level _ran flag resets between tests.
     package.loaded["lib/bookshelf_stale_sweep"] = nil
@@ -186,6 +207,49 @@ local function test_mixed_fresh_and_stale_only_purges_stale()
     assertEq(_G._test_bim_deleted[1], "/books/stale.epub", "purged the right one")
 end
 
+local function test_deletes_wrapped_in_transaction()
+    reset()
+    _G._test_db_rows = {
+        { directory = "/books/", filename = "a.epub", filemtime = 100, filesize = 1000 },
+        { directory = "/books/", filename = "b.epub", filemtime = 200, filesize = 2000 },
+    }
+    _G._test_files = {
+        ["/books/a.epub"] = { size = 1, mtime = 1 },   -- stale
+        ["/books/b.epub"] = { size = 2, mtime = 2 },   -- stale
+    }
+    local Sweep = require("lib/bookshelf_stale_sweep")
+    Sweep:run()
+    -- BEGIN must come before any delete, COMMIT after the last one.
+    assertEq(_G._test_bim_execs[1], "BEGIN;", "first exec is BEGIN")
+    assertEq(_G._test_bim_execs[#_G._test_bim_execs], "COMMIT;", "last exec is COMMIT")
+    assertEq(#_G._test_bim_deleted, 2, "both deletes ran inside the transaction")
+end
+
+local function test_select_failure_allows_retry()
+    reset()
+    -- Force the SELECT to throw by stubbing prepare() to nil. Sweep
+    -- should log the warning, NOT set the once-per-session guard, and
+    -- a follow-up run with the stub restored should proceed normally.
+    local saved_open = package.loaded["lua-ljsqlite3/init"].open
+    package.loaded["lua-ljsqlite3/init"].open = function()
+        return { prepare = function() error("boom") end, close = function() end }
+    end
+    local Sweep = require("lib/bookshelf_stale_sweep")
+    local first = Sweep:run()
+    assertEq(first.scanned, 0, "no rows scanned on failure")
+    -- Restore the working stub and re-run. Without the fix this is
+    -- skipped because _ran was prematurely set; with the fix it
+    -- proceeds.
+    package.loaded["lua-ljsqlite3/init"].open = saved_open
+    _G._test_db_rows = {
+        { directory = "/books/", filename = "a.epub", filemtime = 100, filesize = 1000 },
+    }
+    _G._test_files = { ["/books/a.epub"] = { size = 1, mtime = 1 } }
+    local second = Sweep:run()
+    assertEq(second.skipped, nil, "retry not skipped after prior failure")
+    assertEq(second.stale, 1, "retry actually processes the stale row")
+end
+
 -- ---------- Runner ----------
 local tests = {
     { "fresh rows left alone",                     test_fresh_rows_left_alone },
@@ -195,6 +259,8 @@ local tests = {
     { "once-per-session guard",                    test_once_per_session_guard },
     { "force bypasses guard",                      test_force_bypasses_guard },
     { "mixed: only purges stale",                  test_mixed_fresh_and_stale_only_purges_stale },
+    { "deletes wrapped in transaction",            test_deletes_wrapped_in_transaction },
+    { "SELECT failure allows retry",               test_select_failure_allows_retry },
 }
 
 local failed = 0

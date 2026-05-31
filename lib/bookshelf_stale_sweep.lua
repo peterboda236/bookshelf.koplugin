@@ -68,7 +68,11 @@ function StaleSweep:run(opts)
     if self._ran and not opts.force then
         return { scanned = 0, stale = 0, missing = 0, skipped = true }
     end
-    self._ran = true
+    -- self._ran is set at the SUCCESS path (after the SELECT completes),
+    -- not at entry. If we error out on require/open/SELECT, the next
+    -- init in the same KOReader session can retry. Catches the first-
+    -- deploy race where the sweep module loads before BIM has finished
+    -- its own startup.
 
     local t0 = _gettime()
     local stats = { scanned = 0, stale = 0, missing = 0 }
@@ -89,9 +93,13 @@ function StaleSweep:run(opts)
     -- back into BIM (which opens its OWN connection). SQLite on Kindle
     -- doesn't always tolerate two writers to the same WAL file at once,
     -- and we want BIM's row deletes to commit cleanly.
+    -- ljsqlite3: :rows() lives on the statement, not the connection.
+    -- Connection has :exec / :rowexec / :prepare; statement-iteration
+    -- requires a prepared :step() loop or a :rows() coroutine on the stmt.
     local rows = {}
-    local ok_select = pcall(function()
-        for r in db:rows("SELECT directory, filename, filemtime, filesize FROM bookinfo WHERE in_progress = 0;") do
+    local ok_select, select_err = pcall(function()
+        local stmt = db:prepare("SELECT directory, filename, filemtime, filesize FROM bookinfo WHERE in_progress = 0;")
+        for r in stmt:rows() do
             rows[#rows + 1] = {
                 directory = r[1],
                 filename  = r[2],
@@ -99,12 +107,18 @@ function StaleSweep:run(opts)
                 filesize  = tonumber(r[4]) or 0,
             }
         end
+        stmt:close()
     end)
     pcall(function() db:close() end)
     if not ok_select then
-        logger.warn("[bookshelf stale-sweep] SELECT failed; skipping")
+        logger.warn("[bookshelf stale-sweep] SELECT failed; skipping:", tostring(select_err))
         return stats
     end
+    -- Scan succeeded; we've done useful work. Set the once-per-session
+    -- guard now so a transient delete error below doesn't make us
+    -- re-scan 200 rows every init for the rest of the session, while
+    -- still allowing retry if the setup steps above failed.
+    self._ran = true
 
     local stale_paths = {}
     for _i, r in ipairs(rows) do
@@ -137,11 +151,31 @@ function StaleSweep:run(opts)
     -- persistent row; ScaledCoverCache:drop drops the in-memory scaled
     -- bb. Together they ensure the next render misses both caches and
     -- triggers the existing kickoff extraction.
+    --
+    -- Wrap the loop in a transaction on BIM's own connection. Without
+    -- this, each BIM:deleteBookInfo runs in autocommit mode -- one
+    -- fsync per row on the Kindle's eMMC (~20ms each). Batching 114
+    -- stale rows into a single COMMIT drops 2.3s to ~200ms.
+    --
+    -- BIM:openDbConnection() is idempotent (no-op if already open) and
+    -- the first deleteBookInfo call below would call it anyway. We
+    -- explicitly call it here so the BEGIN below has a connection to
+    -- talk to. The pcall on BEGIN means a failure (mode incompatible,
+    -- connection state issue) silently degrades to per-row autocommit
+    -- -- correct but slow, never wrong.
     local ScaledCoverCache = require("lib/bookshelf_scaled_cover_cache")
+    pcall(function() BIM:openDbConnection() end)
+    local in_tx = false
+    if BIM.db_conn then
+        in_tx = pcall(function() BIM.db_conn:exec("BEGIN;") end)
+    end
     for _i, fp in ipairs(stale_paths) do
         pcall(function() BIM:deleteBookInfo(fp) end)
         pcall(function() ScaledCoverCache:drop(fp) end)
         stats.stale = stats.stale + 1
+    end
+    if in_tx then
+        pcall(function() BIM.db_conn:exec("COMMIT;") end)
     end
 
     logger.info(string.format(
