@@ -731,6 +731,19 @@ function Hardcover.showBookPicker(book, opts)
         end,
         title
     )
+    -- buildSearchDialog doesn't wire a close_callback for the search variant,
+    -- so cancelling the picker returned nowhere. SearchDialog:onClose fires
+    -- close_callback on BOTH cancel and selection, so wiring it here lets the
+    -- caller (the book menu) reopen on either path. On selection the link is
+    -- set synchronously before this reopen runs (only the metadata refresh is
+    -- async), so the reopened menu reflects the new link.
+    if opts.on_close and manager.search_dialog then
+        local prev = manager.search_dialog.close_callback
+        manager.search_dialog.close_callback = function()
+            if prev then prev() end
+            opts.on_close()
+        end
+    end
     return true
 end
 
@@ -763,6 +776,14 @@ function Hardcover.showEditionPicker(book, book_id, opts)
             end)
         end
     )
+    -- See showBookPicker: wire close_callback so cancel/selection both return.
+    if opts.on_close and manager.search_dialog then
+        local prev = manager.search_dialog.close_callback
+        manager.search_dialog.close_callback = function()
+            if prev then prev() end
+            opts.on_close()
+        end
+    end
     return true
 end
 
@@ -829,8 +850,18 @@ end
 
 local function _imageUrl(row)
     if type(row) ~= "table" then return nil end
-    if type(row.cached_image) == "string" and row.cached_image ~= "" then
-        return row.cached_image
+    -- Hardcover's `cached_image` is a JSON object { url, width, height, ... },
+    -- NOT a plain string (the vendored plugin reads cached_image.url too).
+    -- The string branch is kept only as a defensive fallback for any caller
+    -- that pre-flattened it. Missing this object form was why linked books
+    -- never got a fallback cover: _imageUrl returned nil, so nothing was
+    -- downloaded.
+    local ci = row.cached_image
+    if type(ci) == "string" and ci ~= "" then
+        return ci
+    end
+    if type(ci) == "table" and type(ci.url) == "string" and ci.url ~= "" then
+        return ci.url
     end
     if type(row.image) == "table" and type(row.image.url) == "string" then
         return row.image.url

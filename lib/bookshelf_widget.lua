@@ -7368,10 +7368,26 @@ function BookshelfWidget:_openHardcoverMenu(book)
     local link = Hardcover.getLink(book.filepath)
     local dialog
 
-    local function closeThen(fn)
+    -- This menu is opened FROM the book long-press menu (which closed itself
+    -- to show us), so every exit should land the user back on that menu, not
+    -- on the bare bookshelf. Reopening recovers the staged draft stashed by
+    -- the book menu's Hardcover button.
+    local function returnToBookMenu()
+        UIManager:nextTick(function() bw:_openBookMenu(book) end)
+    end
+
+    -- closeThen: close this menu, run the action, then reopen the book menu.
+    -- Actions that open their OWN sub-dialog (the pickers, Reviews) pass
+    -- chains=true and reopen the book menu from that sub-dialog's completion
+    -- callbacks instead -- otherwise the book menu would flash up underneath
+    -- the sub-dialog on the same tick.
+    local function closeThen(fn, chains)
         return function()
             UIManager:close(dialog)
-            if fn then UIManager:nextTick(fn) end
+            UIManager:nextTick(function()
+                if fn then fn() end
+                if not chains then returnToBookMenu() end
+            end)
         end
     end
 
@@ -7391,7 +7407,7 @@ function BookshelfWidget:_openHardcoverMenu(book)
     end
 
     local embedded_button = {
-        text = _("Link embedded IDs"),
+        text = _("Auto link"),
         callback = closeThen(function()
             local ok, result = Hardcover.linkFromEmbeddedIdentifiers(book)
             if not ok then
@@ -7401,11 +7417,16 @@ function BookshelfWidget:_openHardcoverMenu(book)
             refreshLinkedMetadata(_("Hardcover book linked"))
         end),
     }
+    -- (embedded_button is terminal: closeThen reopens the book menu for it.)
 
     local select_book_button = {
-        text = _("Select book") .. "\xE2\x80\xA6",
+        text = _("Manual link") .. "\xE2\x80\xA6",
         callback = closeThen(function()
+            -- on_close fires when the picker closes either way (cancel or
+            -- selection), so the return to the book menu is handled there
+            -- uniformly -- the per-result callbacks only show toasts / refresh.
             local ok, err = Hardcover.showBookPicker(book, {
+                on_close = returnToBookMenu,
                 on_error = function(msg)
                     bw:_hardcoverToast(tostring(msg or _("Hardcover link failed")), 5)
                 end,
@@ -7419,10 +7440,13 @@ function BookshelfWidget:_openHardcoverMenu(book)
                     end
                 end,
             })
+            -- Picker failed to even open: no dialog, so on_close never fires --
+            -- return to the book menu now.
             if not ok then
                 bw:_hardcoverToast(tostring(err or _("Hardcover search failed")), 5)
+                returnToBookMenu()
             end
-        end),
+        end, true),
     }
 
     local select_edition_button = {
@@ -7432,9 +7456,11 @@ function BookshelfWidget:_openHardcoverMenu(book)
             local current = Hardcover.getLink(book.filepath)
             if not current or not current.book_id then
                 bw:_hardcoverToast(_("Link a Hardcover book first"))
+                returnToBookMenu()
                 return
             end
             local ok, err = Hardcover.showEditionPicker(book, current.book_id, {
+                on_close = returnToBookMenu,
                 on_error = function(msg)
                     bw:_hardcoverToast(tostring(msg or _("Hardcover link failed")), 5)
                 end,
@@ -7450,16 +7476,9 @@ function BookshelfWidget:_openHardcoverMenu(book)
             })
             if not ok then
                 bw:_hardcoverToast(tostring(err or _("Hardcover edition search failed")), 5)
+                returnToBookMenu()
             end
-        end),
-    }
-
-    local refresh_button = {
-        text = _("Refresh metadata"),
-        enabled = link and link.book_id and true or false,
-        callback = closeThen(function()
-            refreshLinkedMetadata()
-        end),
+        end, true),
     }
 
     local clear_button = {
@@ -7476,14 +7495,17 @@ function BookshelfWidget:_openHardcoverMenu(book)
         end),
     }
 
-    local reviews_button = {
-        text = _("Reviews") .. "\xE2\x80\xA6",
-        enabled = link and link.book_id and true or false,
-        callback = closeThen(function()
-            bw:_showHardcoverReviews(book)
-        end),
+    local cancel_button = {
+        text = _("Cancel"),
+        callback = function()
+            UIManager:close(dialog)
+            returnToBookMenu()
+        end,
     }
 
+    -- Reviews and Refresh metadata are intentionally NOT here: Reviews was
+    -- promoted to the book long-press menu, and Refresh duplicated that
+    -- menu's own "Refresh metadata" button.
     local linked_text = link
         and (T(_("Linked: %1"), Hardcover.linkLabel(book.filepath) or tostring(link.book_id)))
         or _("Not linked to Hardcover")
@@ -7491,10 +7513,8 @@ function BookshelfWidget:_openHardcoverMenu(book)
         title = _("Hardcover"),
         buttons = {
             { { text = linked_text, enabled = false } },
-            { embedded_button, select_book_button },
-            { select_edition_button, refresh_button },
-            { reviews_button, clear_button },
-            { { text = _("Cancel"), callback = function() UIManager:close(dialog) end } },
+            { embedded_button, select_book_button, select_edition_button },  -- Auto | Manual… | Select edition…
+            { clear_button, cancel_button },                                 -- Clear link (left) | Cancel (right)
         },
     }
     UIManager:show(dialog)
@@ -7838,19 +7858,57 @@ function BookshelfWidget:_openBookMenu(item)
         end),
     }
 
+    -- Hardcover availability + link state, computed once for this menu open.
+    -- isAvailable() gates whether the Hardcover row shows at all; getLink
+    -- picks the linked (Reviews | Hardcover) vs not-linked (Link to Hardcover)
+    -- layout. The button text re-reads getLink live so it updates on reopen.
+    local _ok_hc, _HC = pcall(require, "lib/bookshelf_hardcover")
+    local hc_available = (_ok_hc and _HC and _HC.isAvailable and _HC.isAvailable()) or false
+    local hc_linked = (hc_available and _HC.getLink and _HC.getLink(book.filepath)) and true or false
+
+    -- Stash the staged draft (same as the Collections button) before leaving
+    -- to a Hardcover surface, so when that surface reopens this menu the
+    -- staged status/rating/etc. are recovered rather than lost.
+    local function _stashDraftForHardcover()
+        bw._pending_book_draft = {
+            book_filepath = book.filepath,
+            draft         = {
+                status              = draft.status,
+                rating              = draft.rating,
+                collections_add     = draft.collections_add,
+                collections_remove  = draft.collections_remove,
+                remove_from_history = draft.remove_from_history,
+            },
+        }
+    end
+    local function _reopenBookMenu()
+        UIManager:nextTick(function() bw:_openBookMenu(book) end)
+    end
+
     local hardcover_button = {
         text_func = function()
-            local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
-            if ok_hc and Hardcover and Hardcover.getLink
-                    and Hardcover.getLink(book.filepath) then
-                return _("Hardcover") .. "  \xE2\x9C\x93"
+            if _HC and _HC.getLink and _HC.getLink(book.filepath) then
+                return _("Edit Hardcover link")
             end
-            return _("Hardcover")
+            return _("Link to Hardcover")
         end,
         callback = function()
+            _stashDraftForHardcover()
+            UIManager:close(dialog)
+            UIManager:nextTick(function() bw:_openHardcoverMenu(book) end)
+        end,
+    }
+
+    -- Quick Reviews shortcut, shown beside the manage button when linked.
+    -- Reviews are cache-first so this opens cached reviews even if a refresh
+    -- would need the network; closing returns to this menu.
+    local hc_reviews_button = {
+        text = _("Hardcover reviews"),
+        callback = function()
+            _stashDraftForHardcover()
             UIManager:close(dialog)
             UIManager:nextTick(function()
-                bw:_openHardcoverMenu(book)
+                bw:_showHardcoverReviews(book, { on_close = _reopenBookMenu })
             end)
         end,
     }
@@ -8324,24 +8382,31 @@ function BookshelfWidget:_openBookMenu(item)
     }
 
     -- Final assembly. Order:
-    --   1. Show info / Collections / Rating
-    --   2. Status row (Unopened / Reading / On hold / Finished)
-    --   3. Reset book data… / Remove from history
-    --   4. Refresh metadata / Hardcover
-    --   5. Delete
+    --   1. Hardcover row (only when the plugin is available) -- promoted to
+    --      the top: "Linked to Hardcover ✓" | "Hardcover reviews" when
+    --      linked, or a single full-width "Link to Hardcover" when not.
+    --   2. Show info / Collections / Rating
+    --   3. Status row (Unopened / Reading / On hold / Finished)
+    --   4. Reset book data… / Remove from history / Favourite
+    --   5. Delete / Refresh metadata
     --   6. Select / Cancel / Apply
     --
-    -- Top row pairs Show info / Collections / Rating so the Collections
-    -- button sits right under the header pills (visual anchor to the
-    -- pill strip it manages). Destructive rows at the bottom-left,
-    -- paired with their lighter cleanup sibling on the right.
-    local buttons = {
-        { show_info_button, tags_button, rating_button },
-        status_row,
-        { reset_btn,        remove_history_button, fav_button },
-        { refresh_button,   hardcover_button },
-        { delete_btn },
-    }
+    -- The Hardcover row only appears when the plugin is available (all its
+    -- actions need the API). Cache-backed display elsewhere (e.g. the hero
+    -- rating) is unaffected; without the plugin the menu matches the
+    -- pre-Hardcover layout.
+    local buttons = {}
+    if hc_available then
+        if hc_linked then
+            buttons[#buttons + 1] = { hardcover_button, hc_reviews_button }
+        else
+            buttons[#buttons + 1] = { hardcover_button }
+        end
+    end
+    buttons[#buttons + 1] = { show_info_button, tags_button, rating_button }
+    buttons[#buttons + 1] = status_row
+    buttons[#buttons + 1] = { reset_btn, remove_history_button, fav_button }
+    buttons[#buttons + 1] = { delete_btn, refresh_button }
     buttons[#buttons + 1] = { select_btn, cancel_btn, apply_btn }
 
     dialog = ButtonDialog:new{ buttons = buttons }
