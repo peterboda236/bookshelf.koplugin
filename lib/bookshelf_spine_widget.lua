@@ -591,24 +591,25 @@ function SpineWidget:_renderShadowedCard(inner)
     -- 3. Inner card (image or fallback) at (0,0)
     children[#children + 1] = inner
 
-    -- 3b. On-hold badge (IN FRONT of inner): a centred filled pause-circle,
-    --     like a video player's pause button. Shown when decide() flags the
-    --     book on-hold; decide() also nulls the corner in-progress glyph in
-    --     that case, so the cover carries one clear "on hold" cue rather than
-    --     two competing marks. Sized ~40% of cover width, halo only (it sits
-    --     fully inside the cover, so no drop shadow), centred over the card.
+    -- 3b. On-hold badge (IN FRONT of inner): a centred pause "button" drawn
+    --     as a filled circle + two solid bars, sharing the page-count badge's
+    --     colours (badge_bg fill, badge_fg border + bars). Shown when decide()
+    --     flags the book on-hold; decide() also nulls the corner in-progress
+    --     glyph in that case, so the cover carries one clear "on hold" cue.
+    --     Drawn (not the nf pause-circle glyph) so it centres exactly, keeps
+    --     opaque bars, and matches the other badges -- see buildPauseBadgeWidget.
     if indicators.on_hold and not self.is_bulk_selected then
-        local glyph_h = math.floor(card_w * 0.40)
-        if glyph_h > 0 then
+        local diameter = math.floor(card_w * 0.30)
+        if diameter > 0 then
             local colors = CoverProgress.resolvedColors()
-            local outlined = CoverProgress.buildOutlinedGlyphWidget(
-                CoverProgress.GLYPH_PAUSE_CIRCLE, glyph_h, 1,
-                colors.border,     -- halo (shared Border color)
-                colors.bookmark,   -- centre fill (reuses the in-progress color)
-                "symbols")
+            local badge = CoverProgress.buildPauseBadgeWidget(
+                diameter,
+                colors.badge_bg,   -- circle fill   (matches page-count badge)
+                colors.badge_fg,   -- border + bars (matches page-count badge)
+                Size.border.thin)
             children[#children + 1] = CenterContainer:new{
                 dimen = Geom:new{ w = card_w, h = card_h },
-                outlined,
+                badge,
             }
         end
     end
