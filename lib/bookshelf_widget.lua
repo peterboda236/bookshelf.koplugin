@@ -7400,10 +7400,13 @@ end
 
 function BookshelfWidget:_refreshHardcoverEnrichmentView(reason, filepath)
     Repo.invalidateBookCache(reason or "hardcover")
-    pcall(function() require("lib/bookshelf_image_source").invalidateCache() end)
     -- A cover toggle / re-link changes the cover image; drop the per-filepath
     -- scaled bitmap (and progress memo) so the rebuild re-renders it. No
     -- BIM re-extract needed -- the render prefers cover_image_path directly.
+    -- NOT a global image_source.invalidateCache() here: that re-decodes EVERY
+    -- visible cover (measured ~1.7-2s refresh on a single toggle). The new
+    -- cover is at a new path (or new mtime), so the path+mtime-keyed image
+    -- cache misses for it anyway; only this book's scaled bitmap needs dropping.
     if filepath then
         pcall(function() require("lib/bookshelf_scaled_cover_cache"):drop(filepath) end)
         pcall(function()
