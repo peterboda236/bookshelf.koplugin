@@ -39,6 +39,13 @@ end
 local SHADOW_OFFSET   = Screen:scaleBySize(4)       -- shadow offset in dp
 local CARD_RADIUS     = Screen:scaleBySize(4)       -- rounded corner radius
 local CARD_BORDER     = Screen:scaleBySize(1)       -- 1dp border on the card
+
+-- How far an on-hold book's cover is faded toward the page background, as a
+-- white-blend opacity for bb:lightenRect. Night mode inverts the framebuffer,
+-- so the same white blend reads as a darken toward the black page there — a
+-- mode-correct "shelved / paused" de-emphasis either way. Grid covers only
+-- (gated on show_progress in _wrapCoverInCard, which the hero / stacks clear).
+local ON_HOLD_FADE = 0.6
 -- Selected-state border thickness: matches SHADOW_OFFSET so the border's
 -- outer perimeter sits exactly where the unselected-state drop shadow's
 -- outer edge sits. The selected→unselected transition is then just a
@@ -259,6 +266,8 @@ local RoundedCornerCard = Widget:extend{
     border_size  = 0,
     border_color = nil,                       -- defaults to COLOR_BLACK
     bg_color     = nil,                       -- page bg (default COLOR_WHITE)
+    fade_by      = nil,                        -- 0..1 white-blend over the inner
+                                               -- cover (on-hold de-emphasis); nil = none
     -- Shadow restoration: when the card sits over a drop-shadow, mask pixels
     -- in the card's corner overflow that fall inside the shadow's rounded
     -- shape need to be painted shadow-grey (not bg) so the shadow stays
@@ -313,6 +322,18 @@ end
 function RoundedCornerCard:paintTo(bb, x, y)
     if self.inner then
         self.inner:paintTo(bb, x + self.border_size, y + self.border_size)
+    end
+    -- On-hold fade: blend the page colour over the cover image so the book
+    -- reads as shelved. Applied over the inner area only (inside the border),
+    -- BEFORE the corner mask + border so the rounded shape and frame stay
+    -- crisp on top of the wash.
+    if self.fade_by and self.fade_by > 0 then
+        local b  = self.border_size
+        local iw = self.width  - 2 * b
+        local ih = self.height - 2 * b
+        if iw > 0 and ih > 0 then
+            bb:lightenRect(x + b, y + b, iw, ih, self.fade_by)
+        end
     end
     if self.radius and self.radius > 0 then
         local r       = self.radius
@@ -572,7 +593,9 @@ function SpineWidget:_renderShadowedCard(inner)
 
     local children = {}
 
-    -- 1. Shadow OR selection-border backdrop (z-order: bottom)
+    -- 1. Shadow OR selection-border backdrop (z-order: bottom). On-hold
+    --    covers (faded, borderless — see _wrapCoverInCard) also drop the
+    --    shadow so they sit flat against the page; same gate as the fade.
     if self.is_selected then
         children[#children + 1] = BorderOverlay:new{
             width     = card_w,
@@ -580,7 +603,7 @@ function SpineWidget:_renderShadowedCard(inner)
             thickness = SELECTED_BORDER,
             radius    = CARD_RADIUS,
         }
-    else
+    elseif not (indicators.on_hold and not self.is_bulk_selected) then
         children[#children + 1] = FrameContainer:new{
             bordersize   = 0,
             padding      = 0,
@@ -1272,14 +1295,27 @@ end
 -- from _renderCover so the cache-hit and bb-rendering paths share the
 -- same trailing wrap.
 function SpineWidget:_wrapCoverInCard(cover_inner, card_w, card_h, border)
+    -- On-hold books are fully recessed: faded toward the page background, no
+    -- border, and no drop shadow (the shadow is skipped in the same condition
+    -- in _renderShadowedCard). show_progress is set only on grid covers (the
+    -- hero / folder / series stacks reuse SpineWidget but clear it), so this
+    -- is grid-only by construction. Excluded while selected (current-book
+    -- ring) or bulk-selected, which own their cover chrome.
+    local on_hold = self.show_progress
+        and not self.is_selected and not self.is_bulk_selected
+        and CoverProgress.decide(self.book).on_hold or false
     local cover_args = {
         inner       = cover_inner,
         width       = card_w,
         height      = card_h,
         radius      = CARD_RADIUS,
-        border_size = border,
+        border_size = on_hold and 0 or border,
     }
-    if self.is_selected then
+    if on_hold then
+        cover_args.fade_by = ON_HOLD_FADE
+        -- No shadow_color: with the drop shadow removed the corner mask must
+        -- restore plain page bg, not shadow grey.
+    elseif self.is_selected then
         -- The corner mask normally paints bg-white pixels in the
         -- (0..R, 0..R) corner squares for points OUTSIDE the radius-R
         -- arc, to fake rounded corners on top of a rectangular image.
