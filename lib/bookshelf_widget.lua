@@ -3842,16 +3842,21 @@ end
 -- current page, drilled into a different group, etc). softRefresh's
 -- gate / _swapShelvesInPlace handles those cases separately when the
 -- sort order itself needs refreshing.
+-- Returns true if at least one matching spine was found and replaced, so
+-- callers can fall back to a heavier refresh when the book isn't on the
+-- current page / live tree.
 function BookshelfWidget:_refreshSpineInPlace(fp)
-    if not fp or not self._inner_vgroup or not self._shelf_dims then return end
+    if not fp or not self._inner_vgroup or not self._shelf_dims then return false end
     local d = self._shelf_dims
     local replaced_dimen
+    local replaced = false
     for r = 1, (d.n_shelves or 2) do
         local idx = d.shelf_top_idx + 2 * (r - 1)
         local hg = self._inner_vgroup[idx]
         if hg then
             local parent, slot_idx, old_spine = _descendFindSpine(hg, fp, 0)
             if parent then
+                replaced = true
                 local fresh = Repo.buildBookMeta(fp) or old_spine.book
                 local new_slot = SpineWidget:new{
                     book          = fresh,
@@ -3882,6 +3887,7 @@ function BookshelfWidget:_refreshSpineInPlace(fp)
     if replaced_dimen then
         UIManager:setDirty(self, function() return "ui", replaced_dimen end)
     end
+    return replaced
 end
 
 -- softRefresh — lightweight return-to-bookshelf update. Splits the work
@@ -7472,6 +7478,35 @@ function BookshelfWidget:_refreshHardcoverEnrichmentView(reason, filepath)
         pcall(function()
             if Repo.invalidateProgressCache then Repo.invalidateProgressCache(filepath) end
         end)
+    end
+    -- Per-book cover / description toggles can't reorder the shelf or change
+    -- chip membership (cover_image_path and description aren't sort keys),
+    -- so the whole _rebuild -- fetch + sort + assemble, ~450ms on the All
+    -- chip -- is wasted on a one-book change. Refresh just the affected
+    -- spine in place, plus the hero when this is the previewed book, and
+    -- skip the rebuild. Falls through to _rebuild when the in-place path
+    -- can't reach the book (off the current page, expanded layout, cold
+    -- tree) or for any other reason (re-link / select-edition / metadata
+    -- refresh -- those DO change sort keys and membership).
+    local toggle_only = (reason == "hardcover-use-cover"
+                         or reason == "hardcover-use-description")
+    if toggle_only and filepath
+            and self._inner_vgroup and self._shelf_dims
+            and self:_nShelves() == 2 then
+        local spine_done = self:_refreshSpineInPlace(filepath)
+        local preview_fp = self._preview_book and self._preview_book.filepath
+        local hero_done = false
+        if preview_fp == filepath and not self._expanded then
+            -- The toggled book is the one shown in the hero, so its cover /
+            -- description there needs refreshing too. _swapHeroInPlace
+            -- rebuilds from _preview_book (now reading fresh enrichment) and
+            -- scopes its own setDirty to the hero rect.
+            self:_swapHeroInPlace()
+            hero_done = true
+        end
+        if spine_done or hero_done then
+            return
+        end
     end
     if self._rebuild then
         self:_rebuild()
