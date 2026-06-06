@@ -909,6 +909,78 @@ function Hardcover.linkFromEmbeddedIdentifiers(book, opts)
     return true, hc_book
 end
 
+-- Author / series extraction from a hydrated Hardcover search hit, mirroring
+-- the vendored search_dialog.lua (contributions may be a single .author string
+-- or an array of { author = { name } }; book_series[1].series.name is series).
+local function _candidateAuthor(b)
+    local c = b and b.contributions
+    if type(c) ~= "table" then return nil end
+    if type(c.author) == "string" and c.author ~= "" then return c.author end
+    local names = {}
+    for _, a in ipairs(c) do
+        if type(a) == "table" and type(a.author) == "table"
+                and type(a.author.name) == "string" then
+            names[#names + 1] = a.author.name
+        end
+    end
+    return #names > 0 and table.concat(names, ", ") or nil
+end
+
+local function _candidateSeries(b)
+    local bs = b and b.book_series
+    if type(bs) == "table" and type(bs[1]) == "table"
+            and type(bs[1].series) == "table" then
+        return bs[1].series.name
+    end
+    return nil
+end
+
+-- "Best guess" link: full-text search Hardcover by the book's title + author,
+-- score the hits with the ebook-enricher heuristics, and link the best
+-- confident, canonical match (or nothing). Like linkFromEmbeddedIdentifiers it
+-- only links; the caller enriches afterwards. On success returns a details
+-- table { title, author, title_score, author_score } for the report.
+function Hardcover.bestGuessLink(book)
+    if not (book and book.filepath) then return false, "Missing local book" end
+    local title = book.title or _filenameTitle(book.filepath)
+    local author = _authorString(book)
+    if not title or title == "" then return false, "No title to search" end
+
+    local modules, _settings, user_id, ctx_err = _openPickerContext()
+    if not modules then return false, ctx_err end
+    local ok_search, results = pcall(function()
+        return modules.Api:findBooks(title, author or "", user_id)
+    end)
+    if not ok_search or type(results) ~= "table" then
+        return false, "Hardcover search failed"
+    end
+    if #results == 0 then return false, "no_match" end
+
+    local cands = {}
+    for _, b in ipairs(results) do
+        cands[#cands + 1] = {
+            title       = b.title,
+            author      = _candidateAuthor(b),
+            series_name = _candidateSeries(b),
+            _raw        = b,
+        }
+    end
+
+    local Match = require("lib/bookshelf_hardcover_match")
+    local chosen, t_score, a_score = Match.pickBest(
+        { title = title, author = author, series = book.series }, cands)
+    if not chosen then return false, "no_confident_match" end
+
+    local ok, link_err = Hardcover.linkBook(book.filepath, chosen._raw)
+    if not ok then return false, link_err end
+    return true, {
+        title        = chosen.title,
+        author       = chosen.author,
+        title_score  = t_score,
+        author_score = a_score,
+    }
+end
+
 function Hardcover.showBookPicker(book, opts)
     opts = opts or {}
     if not (book and book.filepath) then return false, "Missing local book" end
