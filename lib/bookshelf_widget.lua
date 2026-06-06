@@ -7715,7 +7715,15 @@ function BookshelfWidget:_openHardcoverMenu(book)
             -- (see SpineWidget._renderCover), so no BIM re-extract is needed.
             refreshAfterAction("hardcover-use-cover")
             local _t_refresh = _gettime()
-            if dialog and dialog.reinit then dialog:reinit() end
+            -- reinit() rebuilds the button tree so the ☑/☐ text_func
+            -- re-evaluates, but doesn't repaint itself. The full-screen
+            -- _rebuild refresh used to redraw the dialog as a side effect;
+            -- the in-place refresh path scopes its setDirty to the spine /
+            -- hero rect, so repaint the dialog explicitly here.
+            if dialog and dialog.reinit then
+                dialog:reinit()
+                UIManager:setDirty(dialog, "ui")
+            end
             logger.dbg(string.format(
                 "[hc diag] use_cover toggle: setUseCover=%.0fms refresh=%.0fms reinit=%.0fms TOTAL=%.0fms",
                 (_t_set - _t0) * 1000, (_t_refresh - _t_set) * 1000,
@@ -7732,7 +7740,12 @@ function BookshelfWidget:_openHardcoverMenu(book)
             local _t_set = _gettime()
             refreshAfterAction("hardcover-use-description")
             local _t_refresh = _gettime()
-            if dialog and dialog.reinit then dialog:reinit() end
+            -- See use_cover_button: reinit rebuilds the checkbox text but
+            -- the scoped in-place refresh no longer repaints the dialog.
+            if dialog and dialog.reinit then
+                dialog:reinit()
+                UIManager:setDirty(dialog, "ui")
+            end
             logger.dbg(string.format(
                 "[hc diag] use_description toggle: setUseDescription=%.0fms refresh=%.0fms reinit=%.0fms TOTAL=%.0fms",
                 (_t_set - _t0) * 1000, (_t_refresh - _t_set) * 1000,
