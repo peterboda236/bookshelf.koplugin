@@ -7738,6 +7738,12 @@ function BookshelfWidget:_openHardcoverMenu(book)
         text_func = function()
             return (flagOn("use_cover") and CHK_ON or CHK_OFF) .. _("Use Hardcover image")
         end,
+        -- Greyed out unless a Hardcover cover is actually downloaded for this
+        -- book: with cover download off (issue #111), or for a book Hardcover
+        -- has no cover for, there's nothing to apply.
+        enabled_func = function()
+            return (Hardcover.hasCover and Hardcover.hasCover(book.filepath)) or false
+        end,
         callback = function()
             local ok, err = Hardcover.setUseCover(book.filepath, not flagOn("use_cover"))
             if not ok then bw:_hardcoverToast(tostring(err or _("Could not update")), 5) end

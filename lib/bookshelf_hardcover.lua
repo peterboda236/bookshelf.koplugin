@@ -704,6 +704,58 @@ function Hardcover.disableSidecarCover(filepath)
     return true
 end
 
+-- hasCover(filepath) — true only if a Hardcover cover image is actually
+-- available on disk for this book (cached file present). Used to grey out the
+-- per-book "Use Hardcover image" toggle: with cover download off (issue #111)
+-- or a book Hardcover has no cover for, there's nothing to apply.
+function Hardcover.hasCover(filepath)
+    local link = Hardcover.getLink(filepath)
+    if not link or not link.book_id then return false end
+    local enrichment = Hardcover.getCachedEnrichment(link.book_id, link.edition_id)
+    local src = type(enrichment) == "table" and enrichment.cover_path or nil
+    if type(src) ~= "string" or src == "" then return false end
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    return (ok_lfs and lfs and lfs.attributes(src, "mode") == "file") or false
+end
+
+-- removeDownloadedCovers() — delete every downloaded Hardcover cover without
+-- unlinking books or dropping descriptions (issue #111 cleanup, lighter than
+-- removeAllData). For each linked book using a Hardcover cover, restore its
+-- original cover and clear the use_cover flag; then delete the cached cover
+-- image files. The enrichment cache (descriptions/ratings) is left intact, so
+-- this only reclaims cover storage. Returns the count of covers undone.
+function Hardcover.removeDownloadedCovers()
+    local n, seen = 0, {}
+    local function undo(fp, link)
+        if type(link) == "table" and link.use_cover == true and not seen[fp] then
+            seen[fp] = true
+            pcall(Hardcover.disableSidecarCover, fp)
+            pcall(_updateLinkField, fp, "use_cover", false)
+            n = n + 1
+        end
+    end
+    for fp, link in pairs(_readLinks()) do undo(fp, link) end
+    for fp, link in pairs(_readExternalLinks(true)) do undo(fp, link) end
+
+    -- Delete the cached cover image files (the cache dir holds only cover
+    -- files; descriptions live in the settings store, untouched here).
+    local dir = _cacheDir()
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if ok_lfs and lfs and lfs.dir and lfs.attributes
+            and lfs.attributes(dir, "mode") == "directory" then
+        local ok_iter, iter, dir_obj = pcall(lfs.dir, dir)
+        if ok_iter and type(iter) == "function" then
+            for entry in iter, dir_obj do
+                if entry ~= "." and entry ~= ".." then
+                    pcall(os.remove, dir .. "/" .. entry)
+                end
+            end
+        end
+    end
+    Hardcover.invalidate()
+    return n
+end
+
 function Hardcover.setUseCover(filepath, enabled)
     local ok, err
     if enabled then
@@ -1397,7 +1449,16 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
     local image_url, cover_w, cover_h = _imageInfo(edition)
     if not image_url then image_url, cover_w, cover_h = _imageInfo(data.book) end
     local key = _cacheKey(book_id, edition_id)
-    local cover_path = image_url and _downloadImage(image_url, key, opts.force) or nil
+    -- Cover download is opt-in (issue #111): off by default so linking pulls
+    -- descriptions/ratings/metadata without writing cover.jpg into every
+    -- book's .sdr (which bloats storage and gets swept up by the library
+    -- metadata scan, since KOReader's indexer recurses .sdr and treats .jpg
+    -- as a document). With it off, cover_path stays nil and nothing is cached
+    -- or applied to the sidecar.
+    local cover_path = nil
+    if image_url and BookshelfSettings.isTrue("hardcover_download_covers") then
+        cover_path = _downloadImage(image_url, key, opts.force)
+    end
     return true, {
         book_id = data.book.id or book_id,
         edition_id = edition and (edition.id or edition_id) or edition_id,

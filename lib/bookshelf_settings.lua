@@ -1649,6 +1649,21 @@ function Settings:_hardcoverSubItems()
             end,
         },
         {
+            text = _("Download covers from Hardcover"),
+            help_text = _("When on, linking a book also downloads its Hardcover cover and stores it as the book's cover. Off by default: most books already have a cover, and downloaded covers use storage and get picked up by the library metadata scan. Descriptions, ratings and metadata are fetched either way; turn this on only if you want Hardcover covers too."),
+            checked_func = function()
+                return BookshelfSettings.isTrue("hardcover_download_covers")
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                local enabled = BookshelfSettings.isTrue("hardcover_download_covers")
+                BookshelfSettings.save("hardcover_download_covers", not enabled)
+                if touchmenu_instance and touchmenu_instance.updateItems then
+                    touchmenu_instance:updateItems()
+                end
+            end,
+        },
+        {
             text_func = function()
                 local n = tonumber(BookshelfSettings.read("hardcover_max_genres")) or 5
                 return T(_("Hardcover genres used: %1"), tostring(n))
@@ -1736,6 +1751,35 @@ function Settings:_hardcoverSubItems()
                             markDirty("hardcover-clear-cache")
                             notify(_("Hardcover cache cleared"))
                         end)
+                    end,
+                },
+                {
+                    -- Cover-only cleanup (issue #111): reclaim the storage that
+                    -- downloaded covers use without unlinking or losing
+                    -- descriptions. Restores each book's original cover.
+                    text = _("Remove downloaded covers"),
+                    help_text = _("Delete every downloaded Hardcover cover and restore each book's original cover, keeping links, descriptions and ratings. Frees the storage the covers use and clears them out of the library metadata scan."),
+                    callback = function(touchmenu_instance)
+                        local ConfirmBox = require("ui/widget/confirmbox")
+                        UIManager:show(ConfirmBox:new{
+                            text = _("Remove all downloaded Hardcover covers?\n\nEach book's original cover is restored; links, descriptions and ratings are kept."),
+                            ok_text = _("Remove covers"),
+                            ok_callback = function()
+                                if touchmenu_instance then
+                                    UIManager:close(touchmenu_instance)
+                                end
+                                UIManager:nextTick(function()
+                                    local ok_hc, Hardcover = pcall(require, "lib/bookshelf_hardcover")
+                                    local n = 0
+                                    if ok_hc and Hardcover and Hardcover.removeDownloadedCovers then
+                                        local ok_run, res = pcall(Hardcover.removeDownloadedCovers)
+                                        if ok_run then n = res or 0 end
+                                    end
+                                    markDirty("hardcover-remove-covers")
+                                    notify(T(_("Removed downloaded covers (%1 book(s))."), tostring(n)))
+                                end)
+                            end,
+                        })
                     end,
                 },
                 {
