@@ -6109,18 +6109,19 @@ function BookshelfWidget:_paginateNext()
             (_gettime() - _diag_t0) * 1000, self.chip))
         return true
     end
-    -- Last page at top level (no drill-down) and chip strip visible
-    -- → cycle to the next tab (with wrap). Drilled-in last page is
-    -- left as a no-op; back-navigation there happens via the
-    -- breadcrumb or east-swipe.
-    if #self._drilldown_path == 0 and not self._chip_bar_hidden then
-        local next_key = self:_chipNeighbour(1)
-        if next_key then
-            logger.dbg(string.format(
-                "[bookshelf perf] paginate: dir=next at end -> chip-switch elapsed=%.0fms",
-                (_gettime() - _diag_t0) * 1000))
-            self:_setActiveChip(next_key)
-        end
+    -- Last page at top level (no drill-down) and chip strip visible:
+    -- stay in the chip and wrap to the first page instead of switching to
+    -- the neighbouring chip (issue #115). Drilled-in last page is left as a
+    -- no-op; back-navigation there happens via the breadcrumb or east-swipe.
+    if #self._drilldown_path == 0 and not self._chip_bar_hidden
+            and total > 1 and self._cursor > 1 then
+        self._cursor = 1
+        self:_syncPageFromCursor()
+        self:_swapShelvesInPlace()
+        self:_schedulePreload(1)
+        logger.dbg(string.format(
+            "[bookshelf perf] paginate: dir=next at end -> wrap to first page elapsed=%.0fms",
+            (_gettime() - _diag_t0) * 1000))
     end
     return true
 end
@@ -6147,13 +6148,20 @@ function BookshelfWidget:_paginatePrev()
         self:_drillBackTo(#self._drilldown_path - 1)
         return true
     end
-    -- Top level + page 1 + chip strip visible → cycle to previous tab
-    -- (with wrap). Hidden strip means 0 or 1 effective tab; cycling
-    -- would either no-op or surface a hidden chip silently, neither
-    -- helpful.
+    -- Top level + page 1 + chip strip visible: stay in the chip and wrap to
+    -- the last page instead of switching to the previous tab (issue #115).
     if not self._chip_bar_hidden then
-        local prev_key = self:_chipNeighbour(-1)
-        if prev_key then self:_setActiveChip(prev_key) end
+        local total       = self._total_pages or 1
+        local last_cursor = self:_maxCursor()
+        if total > 1 and self._cursor < last_cursor then
+            self._cursor = last_cursor
+            self:_syncPageFromCursor()
+            self:_swapShelvesInPlace()
+            self:_schedulePreload(-1)
+            logger.dbg(string.format(
+                "[bookshelf perf] paginate: dir=prev at start -> wrap to last page elapsed=%.0fms",
+                (_gettime() - _diag_t0) * 1000))
+        end
     end
     return true
 end
