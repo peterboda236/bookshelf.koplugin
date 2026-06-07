@@ -21,9 +21,8 @@ local REVIEWS_TTL      = 24 * 60 * 60
 
 local _links
 local _external_links
-local _enrichment_cache
-local _ratings_cache
-local _reviews_cache
+local _cache_db                 -- SQLite handle for the Hardcover cache (lazy)
+local _cache_memo = {}          -- [kind][ckey] -> decoded value (false = known-absent)
 local _hc_settings
 local _hc_settings_object
 
@@ -85,65 +84,190 @@ local function _readExternalLinks(force)
     return _external_links
 end
 
-local function _readEnrichmentCache()
-    if _enrichment_cache then return _enrichment_cache end
-    local raw = BookshelfSettings.read(CACHE_KEY, {})
-    _enrichment_cache = type(raw) == "table" and raw or {}
-    return _enrichment_cache
+-- ── Hardcover cache (SQLite) ────────────────────────────────────────────────
+-- The three caches (enrichment/descriptions, ratings, review text) live in a
+-- dedicated SQLite DB, NOT in bookshelf.lua. On a large, heavily-linked
+-- library these dwarf everything else; keeping them in the hot settings file
+-- meant every settings flush re-serialised the lot and startup dofile'd it
+-- (issue #113). SQLite gives per-book lazy reads + single-row writes, so
+-- bookshelf.lua stays tiny. We own this file; KOReader's own DBs are untouched.
+local function _cacheEncode(v)
+    local ok, s = pcall(function() return require("rapidjson").encode(v) end)
+    return ok and s or nil
+end
+local function _cacheDecode(s)
+    local ok, v = pcall(function() return require("rapidjson").decode(s) end)
+    return (ok and type(v) == "table") and v or nil
 end
 
-local function _saveEnrichmentCache(cache)
-    _enrichment_cache = cache or {}
-    BookshelfSettings.save(CACHE_KEY, _enrichment_cache)
+-- One-time import of the legacy in-bookshelf.lua caches, then drop the keys so
+-- bookshelf.lua shrinks. Pre-2.5 installs stored these under
+-- CACHE_KEY / RATINGS_KEY / REVIEWS_KEY. Runs on first DB open.
+local function _migrateLegacyCaches(db)
+    local stmt = db:prepare(
+        "INSERT OR REPLACE INTO cache (kind, ckey, data) VALUES (?, ?, ?)")
+    local function importKind(legacy_key, kind)
+        local legacy = BookshelfSettings.read(legacy_key, nil)
+        if type(legacy) ~= "table" then return end
+        for ckey, entry in pairs(legacy) do
+            if type(entry) == "table" then
+                local json = _cacheEncode(entry)
+                if json then stmt:bind(kind, tostring(ckey), json):step() end
+                stmt:clearbind():reset()
+            end
+        end
+        BookshelfSettings.delete(legacy_key)
+    end
+    importKind(CACHE_KEY,   "enrich")
+    importKind(RATINGS_KEY, "rating")
+    importKind(REVIEWS_KEY, "review")
+    stmt:close()
 end
 
-local function _readRatingsCache()
-    if _ratings_cache then return _ratings_cache end
-    local raw = BookshelfSettings.read(RATINGS_KEY, {})
-    _ratings_cache = type(raw) == "table" and raw or {}
-    return _ratings_cache
+local function _cacheDb()
+    if _cache_db == false then return nil end   -- disabled after a prior failure
+    if _cache_db then return _cache_db end
+    local ok, db = pcall(function()
+        local DataStorage = require("datastorage")
+        local SQ3 = require("lua-ljsqlite3/init")
+        local d = SQ3.open(DataStorage:getSettingsDir() .. "/bookshelf_hardcover.sqlite3")
+        d:exec("PRAGMA journal_mode=WAL;")
+        d:exec([[CREATE TABLE IF NOT EXISTS cache (
+            kind TEXT NOT NULL, ckey TEXT NOT NULL, data TEXT NOT NULL,
+            PRIMARY KEY (kind, ckey));]])
+        return d
+    end)
+    if not ok or not db then
+        logger.warn("[bookshelf] Hardcover cache DB unavailable:", tostring(db))
+        _cache_db = false   -- degrade gracefully: callers see no cached data
+        return nil
+    end
+    _cache_db = db
+    pcall(_migrateLegacyCaches, db)  -- migration is idempotent + retry-safe
+    return db
 end
 
-local function _saveRatingsCache(cache)
-    _ratings_cache = cache or {}
-    BookshelfSettings.save(RATINGS_KEY, _ratings_cache)
-    BookshelfSettings.save(RATINGS_TIME_KEY, os.time())
+-- Per-book lazy read (the hot render path). Memoised (false = known-absent).
+-- All DB work is pcall-guarded so a SQLite hiccup degrades to "no cached
+-- data" rather than crashing a shelf/hero render.
+local function _cacheGet(kind, ckey)
+    if not ckey then return nil end
+    local m = _cache_memo[kind]
+    if m and m[ckey] ~= nil then
+        local v = m[ckey]
+        return v ~= false and v or nil
+    end
+    local v
+    local db = _cacheDb()
+    if db then
+        local ok, raw = pcall(function()
+            local stmt = db:prepare("SELECT data FROM cache WHERE kind = ? AND ckey = ?")
+            local row = stmt:bind(kind, ckey):step()
+            stmt:clearbind():reset(); stmt:close()
+            return row and row[1] or nil
+        end)
+        if ok and raw then v = _cacheDecode(raw) end
+    end
+    _cache_memo[kind] = _cache_memo[kind] or {}
+    _cache_memo[kind][ckey] = v or false
+    return v
 end
 
--- Merge a single book's aggregate rating into the ratings cache. Called after
--- a per-book enrichment fetch so a freshly linked book shows its rating in the
--- hero without waiting for a full "Refresh Hardcover ratings" sweep. Unlike
--- _saveRatingsCache this does NOT bump RATINGS_TIME_KEY -- that timestamp means
--- "last full sweep", and a single-book back-fill is not one. Preserves any
--- existing user_rating / user_book_id fields from a prior full refresh.
+-- Single-row write.
+local function _cachePut(kind, ckey, value)
+    if not ckey then return end
+    _cache_memo[kind] = _cache_memo[kind] or {}
+    _cache_memo[kind][ckey] = value or false
+    local json = _cacheEncode(value)
+    if not json then return end
+    local db = _cacheDb()
+    if not db then return end
+    pcall(function()
+        local stmt = db:prepare(
+            "INSERT OR REPLACE INTO cache (kind, ckey, data) VALUES (?, ?, ?)")
+        stmt:bind(kind, ckey, json):step()
+        stmt:clearbind():reset(); stmt:close()
+    end)
+end
+
+local function _cacheDelKind(kind)
+    _cache_memo[kind] = nil
+    local db = _cacheDb()
+    if not db then return end
+    pcall(function()
+        local stmt = db:prepare("DELETE FROM cache WHERE kind = ?")
+        stmt:bind(kind):step()
+        stmt:clearbind():reset(); stmt:close()
+    end)
+end
+
+local function _cacheCount(kind)
+    local db = _cacheDb()
+    if not db then return 0 end
+    local ok, n = pcall(function()
+        local stmt = db:prepare("SELECT COUNT(*) FROM cache WHERE kind = ?")
+        local row = stmt:bind(kind):step()
+        stmt:clearbind():reset(); stmt:close()
+        return row and tonumber(row[1]) or 0
+    end)
+    return (ok and n) or 0
+end
+
+-- Whole-kind read / replace — used ONLY by the deliberate ratings-refresh
+-- sweep, which is inherently set-wide; never on the hot render path.
+local function _cacheReadKind(kind)
+    local out = {}
+    local db = _cacheDb()
+    if not db then return out end
+    pcall(function()
+        local stmt = db:prepare("SELECT ckey, data FROM cache WHERE kind = ?")
+        stmt:bind(kind)
+        local row = stmt:step()
+        while row do
+            local v = row[2] and _cacheDecode(row[2]) or nil
+            if v then out[tostring(row[1])] = v end
+            row = stmt:step()
+        end
+        stmt:clearbind():reset(); stmt:close()
+    end)
+    return out
+end
+
+local function _cacheReplaceKind(kind, tbl)
+    _cacheDelKind(kind)
+    local db = _cacheDb()
+    if not db then return end
+    pcall(function()
+        local stmt = db:prepare(
+            "INSERT OR REPLACE INTO cache (kind, ckey, data) VALUES (?, ?, ?)")
+        for ckey, value in pairs(tbl or {}) do
+            local json = _cacheEncode(value)
+            if json then stmt:bind(kind, tostring(ckey), json):step() end
+            stmt:clearbind():reset()
+        end
+        stmt:close()
+    end)
+    _cache_memo[kind] = nil
+end
+
+-- Merge a single book's aggregate rating into the ratings cache (per-book).
+-- Called after a per-book enrichment fetch so a freshly linked book shows its
+-- rating in the hero without a full "Refresh ratings" sweep. Does NOT bump
+-- RATINGS_TIME_KEY -- that means "last full sweep". Preserves existing
+-- user_rating / user_book_id fields from a prior full refresh.
 local function _backfillRatingEntry(book_id, payload)
     if not book_id or type(payload) ~= "table" then return end
     if payload.rating == nil and payload.ratings_count == nil
             and payload.reviews_count == nil then
         return
     end
-    local cache = _readRatingsCache()
     local key = tostring(book_id)
-    local entry = type(cache[key]) == "table" and cache[key] or {}
+    local entry = _cacheGet("rating", key) or {}
     entry.rating = tonumber(payload.rating) or entry.rating or false
     entry.ratings_count = tonumber(payload.ratings_count) or entry.ratings_count or 0
     entry.reviews_count = tonumber(payload.reviews_count) or entry.reviews_count or 0
     entry.fetched_at = os.time()
-    cache[key] = entry
-    _ratings_cache = cache
-    BookshelfSettings.save(RATINGS_KEY, cache)
-end
-
-local function _readReviewsCache()
-    if _reviews_cache then return _reviews_cache end
-    local raw = BookshelfSettings.read(REVIEWS_KEY, {})
-    _reviews_cache = type(raw) == "table" and raw or {}
-    return _reviews_cache
-end
-
-local function _saveReviewsCache(cache)
-    _reviews_cache = cache or {}
-    BookshelfSettings.save(REVIEWS_KEY, _reviews_cache)
+    _cachePut("rating", key, entry)
 end
 
 local function _ratingFromCacheEntry(entry)
@@ -422,9 +546,7 @@ end
 function Hardcover.invalidate()
     _links = nil
     _external_links = nil
-    _enrichment_cache = nil
-    _ratings_cache = nil
-    _reviews_cache = nil
+    _cache_memo = {}
     _hc_settings = nil
     _hc_settings_object = nil
 end
@@ -434,8 +556,7 @@ function Hardcover.getCachedAt()
 end
 
 function Hardcover.getCacheStats()
-    local cache = _readRatingsCache()
-    local linked, rated = 0, 0
+    local linked = 0
     local seen = {}
     local function countLink(_filepath, link)
         if type(link) ~= "table" or not link.book_id then return end
@@ -443,13 +564,15 @@ function Hardcover.getCacheStats()
         if seen[key] then return end
         seen[key] = true
         linked = linked + 1
-        if _ratingFromCacheEntry(cache[key]) then rated = rated + 1 end
     end
     for fp, link in pairs(_readExternalLinks(false)) do countLink(fp, link) end
     for fp, link in pairs(_readLinks()) do countLink(fp, link) end
     return {
         linked = linked,
-        rated = rated,
+        -- Count of cached rating rows. A hair looser than "linked books with a
+        -- usable rating" (the old per-link check), but it's a cosmetic label
+        -- and a COUNT avoids N per-book reads.
+        rated = _cacheCount("rating"),
         fetched_at = Hardcover.getCachedAt(),
     }
 end
@@ -488,11 +611,12 @@ end
 
 function Hardcover.getCachedRating(book_id)
     if not book_id then return nil end
-    return _ratingFromCacheEntry(_readRatingsCache()[tostring(book_id)])
+    return _ratingFromCacheEntry(_cacheGet("rating", tostring(book_id)))
 end
 
 function Hardcover.clearEnrichmentCache()
-    _saveEnrichmentCache({})
+    _cacheDelKind("enrich")
+    BookshelfSettings.delete(CACHE_KEY)   -- drop any pre-migration copy too
     local dir = _cacheDir()
     local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
     if ok_lfs and lfs and lfs.dir and lfs.attributes
@@ -509,13 +633,14 @@ function Hardcover.clearEnrichmentCache()
 end
 
 function Hardcover.clearRatingsCache()
-    _ratings_cache = {}
-    BookshelfSettings.save(RATINGS_KEY, _ratings_cache)
+    _cacheDelKind("rating")
+    BookshelfSettings.delete(RATINGS_KEY)
     BookshelfSettings.delete(RATINGS_TIME_KEY)
 end
 
 function Hardcover.clearReviewsCache()
-    _saveReviewsCache({})
+    _cacheDelKind("review")
+    BookshelfSettings.delete(REVIEWS_KEY)
 end
 
 function Hardcover.getLink(filepath)
@@ -1481,12 +1606,10 @@ local function _fetchBookEnrichment(book_id, edition_id, opts)
 end
 
 function Hardcover.getCachedEnrichment(book_id, edition_id)
-    local cache = _readEnrichmentCache()
-    local key = _cacheKey(book_id, edition_id)
-    local entry = key and cache[key] or nil
+    local entry = _cacheGet("enrich", _cacheKey(book_id, edition_id))
     if type(entry) == "table" then return entry end
     if edition_id then
-        entry = cache[_cacheKey(book_id)]
+        entry = _cacheGet("enrich", _cacheKey(book_id))
         if type(entry) == "table" then return entry end
     end
     return nil
@@ -1499,9 +1622,7 @@ function Hardcover.refreshBook(book, opts)
     if not link or not link.book_id then return false, "Book is not linked to Hardcover" end
     local ok, payload = _fetchBookEnrichment(link.book_id, link.edition_id, opts)
     if not ok then return false, payload end
-    local cache = _readEnrichmentCache()
-    cache[_cacheKey(link.book_id, link.edition_id)] = payload
-    _saveEnrichmentCache(cache)
+    _cachePut("enrich", _cacheKey(link.book_id, link.edition_id), payload)
     _backfillRatingEntry(link.book_id, payload)
     -- First-link defaults for the per-book cover/description overrides. Guarded
     -- internally to fire once (only on undecided flags) -- safe to call on every
@@ -1557,8 +1678,7 @@ function Hardcover.fetchReviews(book_id, opts)
     if not book_id then return false, "Missing Hardcover book id" end
 
     local key = tostring(book_id)
-    local cache = _readReviewsCache()
-    local cached = cache[key]
+    local cached = _cacheGet("review", key)
     local ttl = tonumber(opts.ttl) or REVIEWS_TTL
     if not opts.force and type(cached) == "table" and cached.fetched_at
             and (os.time() - tonumber(cached.fetched_at)) < ttl then
@@ -1619,8 +1739,7 @@ function Hardcover.fetchReviews(book_id, opts)
 
     local payload = _normaliseReviewsPayload(data.books_by_pk)
     if not payload then return false, "Hardcover reviews could not be parsed" end
-    cache[key] = payload
-    _saveReviewsCache(cache)
+    _cachePut("review", key, payload)
     return true, payload
 end
 
@@ -1645,7 +1764,8 @@ function Hardcover.refreshRatings()
 
     local ids = _collectLinkedBookIds()
     if #ids == 0 then
-        _saveRatingsCache({})
+        _cacheReplaceKind("rating", {})
+        BookshelfSettings.save(RATINGS_TIME_KEY, os.time())
         return true, {
             linked = 0,
             rated = 0,
@@ -1683,7 +1803,7 @@ function Hardcover.refreshRatings()
     for _, id in ipairs(ids) do linked_set[tostring(id)] = true end
 
     local cache = {}
-    for key, entry in pairs(_readRatingsCache()) do
+    for key, entry in pairs(_cacheReadKind("rating")) do
         if linked_set[key] then cache[key] = entry end
     end
 
@@ -1724,7 +1844,8 @@ function Hardcover.refreshRatings()
         i = i + BATCH
     end
 
-    _saveRatingsCache(cache)
+    _cacheReplaceKind("rating", cache)
+    BookshelfSettings.save(RATINGS_TIME_KEY, os.time())
     return true, {
         linked = #ids,
         rated = rated,
@@ -1803,7 +1924,7 @@ function Hardcover.enrichBook(book)
     book.hardcover_edition_id = tonumber(link.edition_id) or link.edition_id
     book.hardcover_title = link.title
 
-    local rating_entry = _readRatingsCache()[tostring(link.book_id)]
+    local rating_entry = _cacheGet("rating", tostring(link.book_id))
     book.hardcover_rating = Hardcover.getCachedRating(link.book_id)
     if type(rating_entry) == "table" then
         book.hardcover_ratings_count = tonumber(rating_entry.ratings_count) or 0
@@ -1817,7 +1938,7 @@ function Hardcover.enrichBook(book)
     -- populated when the user opened "Reviews..."). Surface that. Read-only:
     -- this never triggers a network fetch.
     if not book.hardcover_rating then
-        local review_entry = _readReviewsCache()[tostring(link.book_id)]
+        local review_entry = _cacheGet("review", tostring(link.book_id))
         local review_rating = type(review_entry) == "table"
             and tonumber(review_entry.rating) or nil
         if review_rating then
