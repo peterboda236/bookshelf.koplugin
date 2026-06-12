@@ -107,16 +107,11 @@ function StartMenu:init()
     self._margin = math.min(
         math.floor(Size.padding.fullscreen * 2 * 0.8),
         math.floor(Screen:getWidth() * 0.03))
-    self._pad      = Screen:scaleBySize(10)
-    self._row_face  = Fonts:getFace("cfont", 18)
-    self._icon_face = Fonts:getFace("cfont", 22)
-    self._icon_col_w = Screen:scaleBySize(30)
-    self._icon_gap   = math.floor(self._pad / 2) -- breathing room icon → label
-    self._row_h     = Screen:scaleBySize(40)
     -- Chrome constants shared by row building and the pagination budget.
     self._focus_border = Screen:scaleBySize(2) -- row margin/border swap
     self._panel_border = Screen:scaleBySize(2) -- panel FrameContainer border
     self._panel_pad    = Screen:scaleBySize(3) -- panel FrameContainer padding
+    self:_applyFontScale()
     self._items    = Model.load()
     self._page     = 1     -- root panel page (panel-internal pagination)
     self._fly_page = 1     -- flyout panel page
@@ -151,9 +146,11 @@ function StartMenu:init()
     -- rendered rows. If nothing is focusable yet (empty menu with no __add)
     -- _focus.entry_id stays nil and the menu opens without a focus ring.
     if self._focus then
-        local first = self:_firstFocusable(self._focus.panel)
-        if first then
-            self._focus.entry_id = first
+        -- Seed at the bottom so the first arrow press moves upward -- matches
+        -- the menu's visual anchor in the bottom corner of the screen.
+        local last = self:_lastFocusable(self._focus.panel)
+        if last then
+            self._focus.entry_id = last
             self:_rebuild_only()
         end
     end
@@ -162,6 +159,22 @@ end
 function StartMenu:_panelWidthBounds()
     local sw = Screen:getWidth()
     return Screen:scaleBySize(180), math.floor(sw * 0.6)
+end
+
+-- Recomputes font-scaled row dimensions and faces from the current setting.
+-- Called from init() and from _build() so live nudge-dialog changes take
+-- effect on the next rebuild without restarting KOReader.
+function StartMenu:_applyFontScale()
+    local pct = Store.read("start_menu_font_scale") or 100
+    local function sc(n) return math.max(1, math.floor(n * pct / 100 + 0.5)) end
+    self._pad      = Screen:scaleBySize(sc(10))
+    self._row_face  = Fonts:getFace("cfont", sc(18))
+    self._icon_face = Fonts:getFace("cfont", sc(22))
+    self._icon_col_w = Screen:scaleBySize(sc(30))
+    self._icon_gap   = math.floor(self._pad / 2) -- breathing room icon → label
+    self._row_h     = Screen:scaleBySize(sc(40))
+    self._chev_nat  = nil -- invalidate cached chevron width
+    self._scale_pct = pct
 end
 
 -- Natural width of the widest row in `entries`, matching _buildRow's layout
@@ -311,14 +324,19 @@ end
 -- A module row: rendered panel (or muted fallback), tappable, holdable.
 -- The content sits on a light-grey rounded card inset from the panel
 -- edges so module panels read as distinct from plain action rows.
-function StartMenu:_buildModuleRow(entry, w, in_flyout)
+function StartMenu:_buildModuleRow(entry, w, focused, in_flyout)
     local def = Modules.get(entry.module)
+    local focus_border = self._focus_border
+    -- Content fits in (w - 2*focus_border) so the margin/border swap keeps
+    -- the row's outer dimen at exactly w regardless of focus state, matching
+    -- the same contract as _buildRow.
+    local inner_w_frame = w - 2 * focus_border
     local card_margin = math.floor(self._pad / 2) -- inset from panel edges
     local card_pad    = self._pad
-    local inner_w     = w - 2 * card_margin - 2 * card_pad
+    local inner_w     = inner_w_frame - 2 * card_margin - 2 * card_pad
     local inner
     if def then
-        local ok, widget = pcall(def.render, inner_w)
+        local ok, widget = pcall(def.render, inner_w, self._scale_pct or 100)
         inner = ok and widget or nil
         if not ok then
             logger.warn("[bookshelf] start menu module render failed:",
@@ -350,18 +368,19 @@ function StartMenu:_buildModuleRow(entry, w, in_flyout)
         padding    = card_pad,
         content,
     }
-    -- Spans pad the row back out to exactly `w` so the row's dimen (and
-    -- tap range) spans the whole panel width, same contract as _buildRow.
+    -- Spans pad the card row out to inner_w_frame so the margin/border swap
+    -- on the outer frame keeps the total row width at exactly w.
     local card_row = HorizontalGroup:new{
         align = "center",
         HorizontalSpan:new{ width = card_margin },
         card,
         HorizontalSpan:new{
-            width = math.max(0, w - card_margin - card:getSize().w),
+            width = math.max(0, inner_w_frame - card_margin - card:getSize().w),
         },
     }
     local frame = FrameContainer:new{
-        bordersize     = 0,
+        bordersize     = focused and focus_border or 0,
+        margin         = focused and 0 or focus_border,
         padding        = 0,
         padding_top    = card_margin,
         padding_bottom = card_margin,
@@ -409,10 +428,10 @@ function StartMenu:_buildPanel(entries, w, folder_id)
         rows[#rows + 1] = { row = row, entry = add_entry }
     end
     for _i, entry in ipairs(entries) do
+        local is_focused = self._focus and self._focus.entry_id == entry.id
         local row = entry.type == "module"
-            and self:_buildModuleRow(entry, w, in_flyout)
-            or  self:_buildRow(entry, w,
-                self._focus and self._focus.entry_id == entry.id, in_flyout)
+            and self:_buildModuleRow(entry, w, is_focused, in_flyout)
+            or  self:_buildRow(entry, w, is_focused, in_flyout)
         vg[#vg + 1] = row
         rows[#rows + 1] = { row = row, entry = entry }
     end
@@ -531,6 +550,7 @@ function StartMenu:_markUnresolved(items)
 end
 
 function StartMenu:_build()
+    self:_applyFontScale()
     self:_markUnresolved(self._items)
     local sw = Screen:getWidth()
     local sh = Screen:getHeight()
@@ -919,16 +939,15 @@ end
 -- ── Key-nav helpers ──────────────────────────────────────────────────────────
 
 -- Returns the list of focusable entries in the named panel ("root"/"flyout")
--- for the CURRENT visible page slice. Module entries are excluded because they
--- have no meaningful "Press to activate" target. The synthetic __add row IS
--- included (it is the only focusable on an empty root panel).
+-- for the CURRENT visible page slice. The synthetic __add row IS included
+-- (it is the only focusable on an empty root panel).
 function StartMenu:_panelEntries(panel)
     local rows = panel == "flyout" and self._flyout_rows or self._root_rows
     if not rows then return {} end
     local out = {}
     for _i, r in ipairs(rows) do
         local e = r.entry
-        if e and e.type ~= "module" then
+        if e then
             out[#out + 1] = e
         end
     end
