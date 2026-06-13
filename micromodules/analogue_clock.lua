@@ -4,9 +4,9 @@ See README.md in this directory for the module spec contract. The digital
 clock is a separate module (clock.lua); this one is its own entry in the Add
 list for discoverability.
 
-The face is drawn with blitbuffer primitives: a rim circle, 12 ticks inset
-from the rim (the four quarter marks longer and thicker, the other eight
-shorter and thinner), and the hour/minute hands stepped as small squares along
+The face is drawn with blitbuffer primitives: 12 ticks inset from the edge
+(the four quarter marks longer and thicker, the other eight shorter and
+thinner), and the hour/minute hands stepped as small squares along
 their angle (the painted-stroke technique used for the footer art). There is
 no centre hub — the hands run a little past the centre point. No second hand:
 the menu is static and e-ink does not animate per second.
@@ -66,7 +66,7 @@ local function buildFace(diam, now, scale_pct)
     local hourA = ((tm.hour % 12) + tm.min / 60) / 12 * 2 * math.pi
 
     local r          = diam / 2
-    local ring       = w(1.5)          -- rim thickness
+    local ring       = w(1.5)          -- tick inset reference (no rim drawn)
     local tick_gap   = w(4.5)          -- gap between the ticks and the rim
     local tick_w_maj = w(1.5)          -- quarter ticks (12/3/6/9)
     local tick_w_min = w(1)            -- the other eight, thinner
@@ -76,17 +76,13 @@ local function buildFace(diam, now, scale_pct)
     local min_len    = r * 0.78
     local hour_len   = r * 0.50
     local tail_len   = math.max(w(4), r * 0.10) -- run past centre
-    -- Rim painted a touch lighter than the black ticks/hands. A fixed grey
-    -- works in both modes: night-mode framebuffer inversion flips rim and
-    -- hands together, so the rim stays the softer line either way.
-    local RIM_INK    = 0x55
 
     local Face = Widget:extend{}
     function Face:init() self.dimen = Geom:new{ w = diam, h = diam } end
     function Face:getSize() return Geom:new{ w = diam, h = diam } end
     function Face:paintTo(bb, x, y)
         self.dimen = Geom:new{ x = x, y = y, w = diam, h = diam }
-        local sqrt, abs, floor = math.sqrt, math.abs, math.floor
+        local sqrt, floor = math.sqrt, math.floor
         local x0, y0 = x, y
         local x1b, y1b = x + diam - 1, y + diam - 1
         -- Blend `ink` (0 = black, default) over (px,py) by coverage in [0,1]
@@ -118,14 +114,10 @@ local function buildFace(diam, now, scale_pct)
             end
         end
         local cx, cy = x + r, y + r
-        -- Rim: an annulus of thickness `ring` centred on radius rc.
-        local rc, ht = r - ring / 2, ring / 2
-        local maxr = floor(rc + ht + 1)
-        for py = cy - maxr, cy + maxr do
-            for px = cx - maxr, cx + maxr do
-                blend(px, py, ht + 0.5 - abs(sqrt((px - cx) ^ 2 + (py - cy) ^ 2) - rc), RIM_INK)
-            end
-        end
+        -- No rim ring. At larger face sizes / in a flyout it could paint out
+        -- of position (a phantom ring landing over the primary panel); the
+        -- clock reads cleanly as bare ticks + hands without it. `ring` is kept
+        -- only as the tick inset reference below.
         for i = 0, 11 do
             local a = i * (math.pi / 6)
             local is_maj = (i % 3 == 0)
