@@ -191,6 +191,23 @@ local function currentItemList(state)
         end
         local cells = getAllNerdFontCells()
         local items = {}
+        -- User SVG/PNG icons match on filename and surface first, so custom
+        -- icons aren't buried under the nerd-font hits. Only when the caller
+        -- can render images (start menu) -- otherwise a picked [icon=NAME]
+        -- would land somewhere it renders as literal text.
+        if state.allow_svg then
+            for _i, cell in ipairs(IconsLibrary._scanUserIcons()) do
+                local lc = cell.search_lc or cell.label:lower()
+                local m = true
+                for _t = 1, #terms do
+                    if not lc:find(terms[_t], 1, true) then m = false; break end
+                end
+                if m then
+                    items[#items + 1] = cell
+                    if #items >= 200 then return items end
+                end
+            end
+        end
         for _i, cell in ipairs(cells) do
             local lc = cell.search_lc
             local match = true
@@ -207,6 +224,9 @@ local function currentItemList(state)
         end
         return items
     end
+    if state.active_chip == "svg" then
+        return IconsLibrary._scanUserIcons()
+    end
     if state.active_chip == "all" or not state.active_chip then
         -- All: the entire Nerd Font index (~2,800 entries) for free browsing,
         -- alphabetised by cmap name. Curated category chips show smaller
@@ -214,6 +234,16 @@ local function currentItemList(state)
         return getAllNerdFontCells()
     end
     return projectCuratedItems(state.active_chip)
+end
+
+-- Test/seam wrapper around the file-local currentItemList. allow_svg gates the
+-- SVG-folder cells the same way :show does via opts.svg.
+function IconsLibrary._itemList(active_chip, search_query, allow_svg)
+    return currentItemList({
+        active_chip  = active_chip,
+        search_query = search_query,
+        allow_svg    = allow_svg and true or false,
+    })
 end
 
 -- Scan KOReader's standard user icons dir (koreader/icons/) for user-supplied
@@ -250,6 +280,7 @@ function IconsLibrary._scanUserIcons()
                         label = name,
                         insert_value = "[icon=" .. name .. "]",
                         is_image = true,
+                        search_lc = name:lower(),  -- pre-lowered, matches nerd-font cells
                     }
                 end
             end
@@ -319,21 +350,28 @@ end
 ---                        through lib/bookshelf_tokens.lua.
 function IconsLibrary:show(on_select, opts)
     opts = opts or {}
-    -- Chip strip for this invocation: drop the Dynamic category when the
-    -- caller can't expand %tokens. The dynamic entries only surface under
-    -- their own chip (the All view and search cover the Nerd Font index
-    -- only), so omitting the chip removes them entirely.
-    local chips = CHIPS
-    if opts.dynamic == false then
-        chips = {}
-        for _i, c in ipairs(CHIPS) do
-            if c.key ~= "dynamic" then chips[#chips + 1] = c end
-        end
+    -- Drop the per-session scan cache so icons the user dropped into
+    -- koreader/icons/ since the last open show up on this open (the common
+    -- "add a file, reopen the picker" flow). The scan is cheap and the cache
+    -- still spares repeated per-refresh rescans within a single open.
+    _user_icons = nil
+    -- Chip strip for this invocation. Drop the Dynamic category when the
+    -- caller can't expand %tokens. Drop the SVG-folder chip UNLESS the caller
+    -- can render images (opts.svg, set only by the start-menu picker) --
+    -- otherwise a picked [icon=NAME] would show as literal text wherever it
+    -- lands. Both categories surface only under their own chip, so omitting
+    -- the chip removes them entirely.
+    local chips = {}
+    for _i, c in ipairs(CHIPS) do
+        local drop = (c.key == "dynamic" and opts.dynamic == false)
+                  or (c.key == "svg" and not opts.svg)
+        if not drop then chips[#chips + 1] = c end
     end
     -- Captures the runtime state used by the config callbacks. This lives in
     -- a closure rather than on the modal so taps/chips/search can mutate it
     -- without going through LibraryModal's own state.
-    local state = { active_chip = "all", search_query = nil }
+    local state = { active_chip = "all", search_query = nil,
+        allow_svg = opts.svg and true or false }
     -- Memoise the filtered list per (chip, query) key. LibraryModal calls
     -- item_count + item_at-per-cell + pagination's second item_count per
     -- refresh, so without this the search path was scanning all ~2,800

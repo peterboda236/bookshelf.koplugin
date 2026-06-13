@@ -13,6 +13,7 @@ local FAKE = {
     ["dup.svg"]     = "file",
     ["dup.png"]     = "file",   -- same base as dup.svg; svg must win
     ["bad].svg"]    = "file",   -- ']' in name: excluded (breaks tag grammar)
+    [".hidden.svg"] = "file",   -- dotfile: excluded (e.g. macOS ._ sidecars)
     ["sub"]         = "directory",
     ["."]           = "directory",
     [".."]          = "directory",
@@ -72,6 +73,7 @@ t.test("scan lists svg+png, dedups by basename (svg wins), excludes ']' and dirs
     assert(byname["bad]"] == nil, "filename with ']' excluded")
     assert(byname["sub"] == nil, "subdirectory excluded")
     assert(byname["."] == nil and byname[".."] == nil, "dot entries excluded")
+    assert(byname[".hidden"] == nil, "dotfile excluded")
     assert(#cells == 3, "expected 3 cells (heart, star, dup); got " .. #cells)
 end)
 
@@ -88,6 +90,28 @@ t.test("results are sorted alphabetically by label", function()
     local cells = IconsLibrary._scanUserIcons()
     for i = 2, #cells do
         assert(cells[i-1].label:lower() <= cells[i].label:lower(), "sorted at index " .. i)
+    end
+end)
+
+t.test("svg chip returns the scanned user icons", function()
+    local items = IconsLibrary._itemList("svg", nil, true)
+    assert(#items > 0, "svg chip non-empty")
+    assert(items[1].is_image, "svg chip yields image cells")
+end)
+
+t.test("search surfaces matching user icons by filename when allow_svg", function()
+    local items = IconsLibrary._itemList("all", "heart", true)
+    local found = false
+    for _, c in ipairs(items) do
+        if c.is_image and c.label == "heart" then found = true end
+    end
+    assert(found, "user icon 'heart' present in search results for 'heart'")
+end)
+
+t.test("search excludes user icons when not allow_svg", function()
+    local items = IconsLibrary._itemList("all", "heart", false)
+    for _, c in ipairs(items) do
+        assert(not c.is_image, "no image cells when allow_svg is false")
     end
 end)
 
