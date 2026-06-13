@@ -46,6 +46,22 @@ local CHEVRON_RIGHT = "\xEE\xA1\x81" -- U+E841 mdi-chevron-right (used by book m
 local FOLDER_ICON      = "\xEE\xA5\x8A" -- U+E94A mdi-folder
 local FOLDER_ICON_OPEN = "\xEE\xB9\xAE" -- U+EE6E mdi-folder-open (flyout open)
 
+-- Drop shadow matching the shelf cover cards (bookshelf_spine_widget) but at
+-- HALF their distance: same mode-aware grey and the panel's own corner radius,
+-- offset down-right so the popup casts the same shadow the covers do. The grey
+-- is mode-aware because KOReader inverts the framebuffer in night mode, so a
+-- fixed mid-grey would read as a bright halo there (see the spine widget for
+-- the full rationale). Covers offset by scaleBySize(4); half = scaleBySize(2).
+local PANEL_SHADOW_DIST  = Screen:scaleBySize(2)
+local PANEL_SHADOW_DAY   = Blitbuffer.gray(0.5)
+local PANEL_SHADOW_NIGHT = Blitbuffer.gray(0.15)
+local function _panelShadowGray()
+    if G_reader_settings and G_reader_settings:isTrue("night_mode") then
+        return PANEL_SHADOW_NIGHT
+    end
+    return PANEL_SHADOW_DAY
+end
+
 -- Rounded panel frame. Stock FrameContainer paints its background fill and
 -- its border with arcs of DIFFERENT centers when both radius and bordersize
 -- are set (framecontainer.lua adds bordersize to the fill radius), leaving a
@@ -58,6 +74,7 @@ local PanelFrame = WidgetContainer:extend{
     padding    = 0,
     radius     = 0,
     margin     = 0, -- consumers read frame.margin (FrameContainer parity)
+    shadow     = 0, -- drop-shadow distance; 0 = none
 }
 function PanelFrame:getSize()
     local s = self[1]:getSize()
@@ -68,6 +85,12 @@ function PanelFrame:paintTo(bb, x, y)
     local sz = self:getSize()
     self.dimen = Geom:new{ x = x, y = y, w = sz.w, h = sz.h }
     local t = self.bordersize
+    if self.shadow and self.shadow > 0 then
+        -- Painted first, under the panel; the panel's opaque fill overpaints
+        -- all but the down-right strip, leaving the cover-style drop shadow.
+        bb:paintRoundedRect(x + self.shadow, y + self.shadow, sz.w, sz.h,
+            _panelShadowGray(), self.radius)
+    end
     bb:paintRoundedRect(x, y, sz.w, sz.h, Blitbuffer.COLOR_BLACK, self.radius)
     bb:paintRoundedRect(x + t, y + t, sz.w - 2 * t, sz.h - 2 * t,
         Blitbuffer.COLOR_WHITE, math.max(0, self.radius - t))
@@ -203,9 +226,15 @@ function StartMenu:_measurePanelWidth(entries)
     local min_w, max_w = self:_panelWidthBounds()
     -- Reserve the chevron slot for the whole panel when ANY entry is a
     -- folder (all rows share one fixed width).
-    local has_folder = false
+    local has_folder, has_module = false, false
     for _i, e in ipairs(entries) do
-        if e.type == "folder" then has_folder = true; break end
+        if e.type == "folder" then has_folder = true end
+        if e.type == "module" then has_module = true end
+    end
+    -- Micro-modules render at the panel width; give a panel that contains one
+    -- a floor 25% above the plain-row minimum so modules get more room.
+    if has_module then
+        min_w = math.min(max_w, math.floor(min_w * 1.25))
     end
     local chrome = self:_rowChromeWidth(has_folder)
     local max_natural = 0
@@ -439,6 +468,7 @@ function StartMenu:_buildPanel(entries, w, folder_id)
         bordersize = self._panel_border,
         padding    = self._panel_pad,
         radius     = Screen:scaleBySize(4), -- bookshelf's card radius (CARD_RADIUS)
+        shadow     = PANEL_SHADOW_DIST,
         vg,
     }
     return frame, rows
@@ -637,8 +667,9 @@ function StartMenu:_build()
         allow_mirroring = false, -- OffsetContainer children self-position
         OffsetContainer:new{ x_off = root_x, y_off = root_y, root_frame },
     }
+    -- Include the down-right drop shadow so scoped refreshes clear it too.
     self._root_region = Geom:new{ x = root_x, y = root_y,
-        w = root_sz.w, h = root_sz.h }
+        w = root_sz.w + PANEL_SHADOW_DIST, h = root_sz.h + PANEL_SHADOW_DIST }
 
     -- Flyout panel
     self._flyout_region = nil
@@ -718,7 +749,7 @@ function StartMenu:_build()
             group[#group + 1] = OffsetContainer:new{
                 x_off = fly_x, y_off = fly_y, fly_frame }
             self._flyout_region = Geom:new{ x = fly_x, y = fly_y,
-                w = fly_sz.w, h = fly_sz.h }
+                w = fly_sz.w + PANEL_SHADOW_DIST, h = fly_sz.h + PANEL_SHADOW_DIST }
         else
             self._flyout_for = nil
         end
