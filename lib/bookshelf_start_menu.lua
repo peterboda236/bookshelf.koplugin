@@ -136,8 +136,12 @@ function StartMenu:init()
     self._panel_pad    = Screen:scaleBySize(3) -- panel FrameContainer padding
     self:_applyFontScale()
     self._items    = Model.load()
-    self._page     = 1     -- root panel page (panel-internal pagination)
-    self._fly_page = 1     -- flyout panel page
+    -- Open on the LAST page (the menu is anchored bottom-left, so the final
+    -- rows sit by the thumb). Seeding the page past the end makes the first
+    -- build clamp it to the real last page; _build runs once per open, so this
+    -- is the open-time default and edits/reloads keep the page.
+    self._page     = #self._items -- root panel page (panel-internal pagination)
+    self._fly_page = 1            -- flyout panel page (folders open at top)
     self._flyout_for = nil -- id of the open folder, or nil
     self._focus    = nil   -- key-nav focus { panel, entry_id }; set when hasDPad
     if Device:isTouchDevice() then
@@ -486,16 +490,27 @@ function StartMenu:_maxRows()
 end
 
 -- Panel-internal pagination: slice entries to what fits the height budget.
+-- Pages are tiled from the BOTTOM, so any short remainder lands on page 1 (the
+-- top) and every lower page is full. The menu opens on the last page (see
+-- init), so its first view is a full page rather than a 1-2 item remainder.
 function StartMenu:_pageSlice(entries, page, max_rows)
     local total = #entries
     if total <= max_rows then return entries, false, false end
-    local per = max_rows - 1 -- reserve one row slot for the pager
-    local first = (page - 1) * per + 1
+    local per   = max_rows - 1 -- reserve one row slot for the pager
+    local pages = math.ceil(total / per)
+    local rem   = total - (pages - 1) * per -- size of page 1 (top), in 1..per
+    local first, last
+    if page <= 1 then
+        first, last = 1, rem
+    else
+        first = rem + (page - 2) * per + 1
+        last  = math.min(first + per - 1, total)
+    end
     local out = {}
-    for i = first, math.min(first + per - 1, total) do
+    for i = first, last do
         out[#out + 1] = entries[i]
     end
-    return out, first > 1, first + per - 1 < total
+    return out, first > 1, last < total
 end
 
 -- is_root: root-panel pagers decline taps that land inside the open flyout's
