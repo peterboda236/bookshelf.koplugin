@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-14 01:11+0100\n"
+"POT-Creation-Date: 2026-06-14 06:56+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -230,7 +230,7 @@ msgstr ""
 
 #: lib/bookshelf_chip_editor.lua:207 lib/bookshelf_chip_editor.lua:1286
 #: lib/bookshelf_settings.lua:78 lib/bookshelf_tab_model.lua:52
-#: lib/bookshelf_widget.lua:1193
+#: lib/bookshelf_tokens.lua:20 lib/bookshelf_widget.lua:1193
 msgid "Authors"
 msgstr ""
 
@@ -291,7 +291,7 @@ msgstr ""
 msgid "Format"
 msgstr ""
 
-#: lib/bookshelf_chip_editor.lua:225 lib/bookshelf_tokens.lua:56
+#: lib/bookshelf_chip_editor.lua:225 lib/bookshelf_tokens.lua:74
 #: micromodules/trivia.lua:465
 msgid "Language"
 msgstr ""
@@ -560,7 +560,7 @@ msgstr ""
 msgid "Remove"
 msgstr ""
 
-#: lib/bookshelf_collection_manager.lua:932
+#: lib/bookshelf_collection_manager.lua:932 lib/bookshelf_widget.lua:3226
 #, lua-format
 msgid "Page %d of %d"
 msgstr ""
@@ -662,10 +662,12 @@ msgid "Dynamic"
 msgstr ""
 
 #: lib/bookshelf_icons_catalogue.lua:22 lib/bookshelf_settings.lua:81
+#: lib/bookshelf_tokens.lua:22
 msgid "Device"
 msgstr ""
 
 #: lib/bookshelf_icons_catalogue.lua:24 lib/bookshelf_settings.lua:80
+#: lib/bookshelf_tokens.lua:25
 msgid "Time"
 msgstr ""
 
@@ -1156,16 +1158,17 @@ msgstr ""
 msgid "Refresh"
 msgstr ""
 
-#: lib/bookshelf_settings.lua:77 lib/bookshelf_widget.lua:7860
+#: lib/bookshelf_settings.lua:77 lib/bookshelf_tokens.lua:21
+#: lib/bookshelf_widget.lua:7860
 msgid "Book"
 msgstr ""
 
 #: lib/bookshelf_settings.lua:79 lib/bookshelf_settings.lua:350
-#: lib/bookshelf_sort_engine.lua:376
+#: lib/bookshelf_sort_engine.lua:376 lib/bookshelf_tokens.lua:24
 msgid "Progress"
 msgstr ""
 
-#: lib/bookshelf_settings.lua:82
+#: lib/bookshelf_settings.lua:82 lib/bookshelf_tokens.lua:23
 msgid "Logic"
 msgstr ""
 
@@ -1205,7 +1208,7 @@ msgid "Status line"
 msgstr ""
 
 #: lib/bookshelf_settings.lua:344 lib/bookshelf_settings.lua:1960
-#: lib/bookshelf_sort_engine.lua:333 lib/bookshelf_tokens.lua:39
+#: lib/bookshelf_sort_engine.lua:333 lib/bookshelf_tokens.lua:57
 msgid "Title"
 msgstr ""
 
@@ -1984,6 +1987,7 @@ msgid "Small"
 msgstr ""
 
 #: lib/bookshelf_settings.lua:2535 micromodules/analogue_clock.lua:166
+#: micromodules/trivia.lua:91
 msgid "Medium"
 msgstr ""
 
@@ -2131,7 +2135,7 @@ msgstr ""
 msgid "Author surname"
 msgstr ""
 
-#: lib/bookshelf_sort_engine.lua:348 lib/bookshelf_tokens.lua:46
+#: lib/bookshelf_sort_engine.lua:348 lib/bookshelf_tokens.lua:64
 msgid "Series name"
 msgstr ""
 
@@ -2159,7 +2163,7 @@ msgstr ""
 msgid "Opened"
 msgstr ""
 
-#: lib/bookshelf_sort_engine.lua:376 lib/bookshelf_tokens.lua:57
+#: lib/bookshelf_sort_engine.lua:376 lib/bookshelf_tokens.lua:75
 msgid "Percent read"
 msgstr ""
 
@@ -2192,6 +2196,7 @@ msgid "File size"
 msgstr ""
 
 #: lib/bookshelf_sort_engine.lua:422 micromodules/shelf_size.lua:69
+#: micromodules/trivia.lua:70
 msgid "Books"
 msgstr ""
 
@@ -2336,196 +2341,211 @@ msgstr ""
 msgid "Tags"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:40
+#: lib/bookshelf_tokens.lua:58
 msgid "First author"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:41
+#: lib/bookshelf_tokens.lua:59
 msgid "Second author"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:42
+#: lib/bookshelf_tokens.lua:60
 msgid "Third author"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:43
+#: lib/bookshelf_tokens.lua:61
 msgid "Number of authors (numeric)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:44
+#: lib/bookshelf_tokens.lua:62
 msgid "All authors, comma-separated"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:45
+#: lib/bookshelf_tokens.lua:63
 msgid "First author, or 'A and B', or 'A, B, et al.' for 3+"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:47
+#: lib/bookshelf_tokens.lua:65
 msgid "Series number"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:48
+#: lib/bookshelf_tokens.lua:66
 msgid "Star rating (★★★☆☆), empty when unrated"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:49
+#: lib/bookshelf_tokens.lua:67
 msgid "Rating as a number 1-5 (empty when unrated)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:50
+#: lib/bookshelf_tokens.lua:68
 msgid "Cached Hardcover rating number"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:51
+#: lib/bookshelf_tokens.lua:69
 msgid "Cached Hardcover rating as stars"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:52
+#: lib/bookshelf_tokens.lua:70
 msgid "Reading status (unread / reading / on_hold / finished)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:53
+#: lib/bookshelf_tokens.lua:71
 msgid "File name"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:54
+#: lib/bookshelf_tokens.lua:72
 msgid "Format (EPUB/PDF/…)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:55
+#: lib/bookshelf_tokens.lua:73
 msgid "Book blurb (HTML stripped)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:58
+#: lib/bookshelf_tokens.lua:76
 msgid "Percent left"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:59
+#: lib/bookshelf_tokens.lua:77
 msgid "Current page"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:60
+#: lib/bookshelf_tokens.lua:78
 msgid "Total pages (approximate for EPUB)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:61
+#: lib/bookshelf_tokens.lua:79
 msgid "Pages left (approximate for EPUB)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:62
+#: lib/bookshelf_tokens.lua:80
 msgid "Time left to finish (statistics)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:63
+#: lib/bookshelf_tokens.lua:81
 msgid "Total time read (statistics)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:64
+#: lib/bookshelf_tokens.lua:82
 msgid "Pages read (statistics)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:65
+#: lib/bookshelf_tokens.lua:83
 msgid "Days since first opened (statistics)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:66
+#: lib/bookshelf_tokens.lua:84
 msgid "Pages per day (statistics)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:67
+#: lib/bookshelf_tokens.lua:85
 msgid "Speed in pages/hour (statistics)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:68
+#: lib/bookshelf_tokens.lua:86
 msgid "Time (12-hour)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:69
+#: lib/bookshelf_tokens.lua:87
 msgid "Time (24-hour)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:70
+#: lib/bookshelf_tokens.lua:88
 msgid "Date (e.g. 4 May)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:71
+#: lib/bookshelf_tokens.lua:89
 msgid "Date (e.g. 4 May 2026)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:72
+#: lib/bookshelf_tokens.lua:90
 msgid "Date (numeric)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:73
+#: lib/bookshelf_tokens.lua:91
 msgid "Weekday"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:74
+#: lib/bookshelf_tokens.lua:92
 msgid "Weekday (short)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:75
+#: lib/bookshelf_tokens.lua:93
 msgid "Battery percentage"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:76
+#: lib/bookshelf_tokens.lua:94
 msgid "Battery icon (Nerd Font)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:77
+#: lib/bookshelf_tokens.lua:95
 msgid "Wi-Fi icon"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:78
+#: lib/bookshelf_tokens.lua:96
 msgid "Night mode icon (moon/sun)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:79
+#: lib/bookshelf_tokens.lua:97
 msgid "Frontlight intensity (raw)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:80
+#: lib/bookshelf_tokens.lua:98
 msgid "Frontlight intensity (0–100%)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:81
+#: lib/bookshelf_tokens.lua:99
 msgid "Frontlight icon"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:82
+#: lib/bookshelf_tokens.lua:100
 msgid "Warmth value (natural-light only)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:83
+#: lib/bookshelf_tokens.lua:101
 msgid "System memory used (%)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:84
+#: lib/bookshelf_tokens.lua:102
 msgid "KOReader RSS (MiB)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:85
+#: lib/bookshelf_tokens.lua:103
 msgid "Storage free (GB)"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:86
+#: lib/bookshelf_tokens.lua:104
 msgid "Show … when token foo is set"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:87
+#: lib/bookshelf_tokens.lua:105
 msgid "Show … when foo is empty"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:88
+#: lib/bookshelf_tokens.lua:106
 msgid "Numeric comparison"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:89
+#: lib/bookshelf_tokens.lua:107
 msgid "If/else"
 msgstr ""
 
-#: lib/bookshelf_tokens.lua:90
+#: lib/bookshelf_tokens.lua:108
 msgid "Elastic gap: pushes content left/right to the region edges"
+msgstr ""
+
+#: lib/bookshelf_tokens.lua:615
+#, lua-format
+msgid "%dh %02dm"
+msgstr ""
+
+#: lib/bookshelf_tokens.lua:628
+#, lua-format
+msgid "%ds"
+msgstr ""
+
+#: lib/bookshelf_tokens.lua:629
+#, lua-format
+msgid "%dm %02ds"
 msgstr ""
 
 #: lib/bookshelf_updater.lua:106
@@ -3434,6 +3454,91 @@ msgstr ""
 msgid "Shelf size"
 msgstr ""
 
+#: micromodules/trivia.lua:68 micromodules/trivia.lua:89
+#: micromodules/trivia.lua:96 micromodules/trivia.lua:420
+msgid "Any"
+msgstr ""
+
+#: micromodules/trivia.lua:69
+msgid "General Knowledge"
+msgstr ""
+
+#: micromodules/trivia.lua:71
+msgid "Film"
+msgstr ""
+
+#: micromodules/trivia.lua:72
+msgid "Music"
+msgstr ""
+
+#: micromodules/trivia.lua:73
+msgid "Television"
+msgstr ""
+
+#: micromodules/trivia.lua:74
+msgid "Video Games"
+msgstr ""
+
+#: micromodules/trivia.lua:75
+msgid "Science & Nature"
+msgstr ""
+
+#: micromodules/trivia.lua:76
+msgid "Computers"
+msgstr ""
+
+#: micromodules/trivia.lua:77
+msgid "Mathematics"
+msgstr ""
+
+#: micromodules/trivia.lua:78
+msgid "Mythology"
+msgstr ""
+
+#: micromodules/trivia.lua:79
+msgid "Sports"
+msgstr ""
+
+#: micromodules/trivia.lua:80
+msgid "Geography"
+msgstr ""
+
+#: micromodules/trivia.lua:81
+msgid "History"
+msgstr ""
+
+#: micromodules/trivia.lua:82
+msgid "Politics"
+msgstr ""
+
+#: micromodules/trivia.lua:83
+msgid "Art"
+msgstr ""
+
+#: micromodules/trivia.lua:84
+msgid "Animals"
+msgstr ""
+
+#: micromodules/trivia.lua:85
+msgid "Vehicles"
+msgstr ""
+
+#: micromodules/trivia.lua:90
+msgid "Easy"
+msgstr ""
+
+#: micromodules/trivia.lua:92
+msgid "Hard"
+msgstr ""
+
+#: micromodules/trivia.lua:97
+msgid "Multiple Choice"
+msgstr ""
+
+#: micromodules/trivia.lua:98
+msgid "True/False"
+msgstr ""
+
 #: micromodules/trivia.lua:263 micromodules/trivia.lua:570
 msgid "No questions ▶"
 msgstr ""
@@ -3448,10 +3553,6 @@ msgstr ""
 
 #: micromodules/trivia.lua:307 micromodules/trivia.lua:524
 msgid "Trivia"
-msgstr ""
-
-#: micromodules/trivia.lua:420
-msgid "Any"
 msgstr ""
 
 #: micromodules/trivia.lua:461
