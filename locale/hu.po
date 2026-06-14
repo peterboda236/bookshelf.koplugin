@@ -1136,7 +1136,7 @@ msgstr "Keresés"
 
 #: lib/bookshelf_library_modal.lua:953
 msgid "Page %1 of %2"
-msgstr "%1 / %2 oldal"
+msgstr "Oldalszám: %1 / %2"
 
 #: lib/bookshelf_menu_host.lua:135
 msgid "Back"
