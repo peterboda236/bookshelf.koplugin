@@ -105,6 +105,7 @@ Tokens.CATALOGUE = {
     { category = "Logic",    token = "[if:not foo]…[/if]",description = _("Show … when foo is empty") },
     { category = "Logic",    token = "[if:foo>50]…[/if]", description = _("Numeric comparison") },
     { category = "Logic",    token = "[if:foo]…[else]…[/if]", description = _("If/else") },
+    { category = "Logic",    token = "[if:lang=ja][font=NAME]…[/font][else]…[/if]", description = _("Per-language font: e.g. a Japanese face for ja books, another otherwise") },
     { category = "Logic",    token = "%spacer",           description = _("Elastic gap: pushes content left/right to the region edges") },
 }
 
