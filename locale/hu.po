@@ -4237,3 +4237,6 @@ msgstr "Ma: %1 · %2 oldal"
 #: micromodules/stats.lua:90
 msgid "This week: %1"
 msgstr "Ezen a héten: %1"
+
+msgid "Show info"
+msgstr "Infó megjelenítése"
