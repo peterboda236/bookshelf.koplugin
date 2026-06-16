@@ -3931,3 +3931,29 @@ msgstr "Frissítve: %1 perccel ezelőtt"
 #: micromodules/weather.lua:455
 msgid "Updated %1h ago"
 msgstr "Frissítve: %1 órával ezelőtt"
+
+#: micromodules/reading_streak.lua:162
+#: micromodules/reading_streak.lua:179
+#: micromodules/reading_streak.lua:213
+msgid "Reading streak"
+msgstr "Olvasási sorozat"
+
+#: micromodules/reading_streak.lua:186
+msgid "Stats unavailable"
+msgstr "Statisztika nem elérhető"
+
+#: micromodules/reading_streak.lua:196
+msgid "%1 day"
+msgstr "%1 nap"
+
+#: micromodules/reading_streak.lua:198
+msgid "%1 days"
+msgstr "%1 nap"
+
+#: micromodules/reading_streak.lua:203
+msgid "%1 week"
+msgstr "%1 hét"
+
+#: micromodules/reading_streak.lua:205
+msgid "%1 weeks"
+msgstr "%1 hét"
