@@ -93,6 +93,7 @@ Tokens.CATALOGUE = {
     { category = "Device",   token = "%batt",             description = _("Battery percentage") },
     { category = "Device",   token = "%batt_icon",        description = _("Battery icon (Nerd Font)") },
     { category = "Device",   token = "%wifi_icon",        description = _("Wi-Fi icon") },
+    { category = "Device",   token = "[if:connected]%wifi_icon[/if]", description = _("Wi-Fi icon only when online") },
     { category = "Device",   token = "%nightmode",        description = _("Night mode icon (moon/sun)") },
     { category = "Device",   token = "%light",            description = _("Frontlight intensity (raw)") },
     { category = "Device",   token = "%light_pct",        description = _("Frontlight intensity (0–100%)") },
@@ -662,6 +663,13 @@ Tokens.expanders.wifi_icon = function(_b, s)
                                   or  "\xee\xb2\xa9"   -- U+ECA9 wifi-off
 end
 Tokens.expanders.wifi = Tokens.expanders.wifi_icon
+-- Connection state for CONDITIONS (not a display glyph): "yes" only when Wi-Fi is
+-- on AND linked, else empty. So `[if:connected]%wifi_icon[/if]` (or, matching
+-- bookends, `[if:connected=yes]%wifi[/if]`) shows the Wi-Fi icon only when
+-- actually online (issue #181). %wifi/%wifi_icon stay the glyph.
+Tokens.expanders.connected = function(_b, s)
+    return (s and s.connected == "yes") and "yes" or ""
+end
 -- Night mode glyph: moon when night mode is on, sun otherwise. Mirrors
 -- bookends (bookends_tokens.lua:2110-2117) — driven by KOReader's
 -- persistent "night_mode" setting, not a per-frame state read.

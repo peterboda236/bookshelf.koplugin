@@ -2810,6 +2810,12 @@ function BookshelfWidget:_buildDeviceState()
                        and PowerD:isCharging() or false,
         wifi     = (ok_nm and NetMgr and NetMgr.isWifiOn and NetMgr:isWifiOn())
                        and "on" or "off",
+        -- Actual link state (radio on AND connected), for the %connected
+        -- condition: [if:connected]%wifi_icon[/if] shows the icon only when
+        -- online. Mirrors bookends' `connected` state (issue #181).
+        connected = (ok_nm and NetMgr and NetMgr.isWifiOn and NetMgr:isWifiOn()
+                       and NetMgr.isConnected and NetMgr:isConnected())
+                       and "yes" or "no",
         light    = light,
         light_pct= light_pct,
         warmth   = warmth,
