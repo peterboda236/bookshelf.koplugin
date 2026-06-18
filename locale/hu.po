@@ -2529,7 +2529,7 @@ msgstr "Fájlméret"
 #: lib/bookshelf_sort_engine.lua:422 micromodules/shelf_size.lua:70
 #: micromodules/trivia.lua:70
 msgid "Books"
-msgstr "Könyvek"
+msgstr "Könyv"
 
 #: lib/bookshelf_sort_engine.lua:437
 msgid "Page count"
@@ -4243,3 +4243,202 @@ msgstr "Infó megjelenítése"
 
 msgid "Search results"
 msgstr "Keresési eredmények"
+
+#: lib/bookshelf_hero_modules.lua:307 lib/bookshelf_start_menu.lua:491
+msgid "%1 (error)"
+msgstr "%1 (hiba)"
+
+#: lib/bookshelf_hero_modules.lua:378
+msgid "Hold to add micro-modules"
+msgstr "Tartsd nyomva micromodule-ok hozzáadásához"
+
+#: lib/bookshelf_hero_modules_edit.lua:53
+msgid "Pg. %1"
+msgstr "%1. old."
+
+#: lib/bookshelf_module_picker.lua:58
+msgid "Network required"
+msgstr "Internetkapcsolat szükséges"
+
+#: lib/bookshelf_module_picker.lua:61
+msgid "Data provided by:"
+msgstr "Adatforrás:"
+
+#: lib/bookshelf_settings.lua:1337 lib/bookshelf_settings.lua:2676
+msgid "Edit shelf layout"
+msgstr "Polc elrendezésének szerkesztése"
+
+#: lib/bookshelf_settings.lua:1338
+msgid ""
+"Open a small overlay that lets you set the number of columns and rows of "
+"books on the shelf, with the bookshelf visible behind it. Cover size follows "
+"the column count and the hero area fills the space left over. Changes "
+"preview in realtime; Accept keeps them, Cancel reverts."
+msgstr ""
+"Egy kis ablakot nyit meg, ahol beállíthatod a polcon lévő könyvek oszlop- és "
+"sorainak számát, miközben a könyvespolc látható marad mögötte. A borítóméret "
+"az oszlopszámhoz igazodik, a hero area a maradék helyet tölti ki. A "
+"változások valós időben előnézetezhetők; az Elfogadás menti, a Mégse visszaállítja őket."
+
+#: lib/bookshelf_settings.lua:1436
+msgid "Currently reading"
+msgstr "Jelenleg olvasom"
+
+#: lib/bookshelf_settings.lua:1437
+msgid "Micro modules"
+msgstr "Micromodule-ok"
+
+#: lib/bookshelf_settings.lua:1471
+msgid "Hero area starts with"
+msgstr "A hero area kezdőnézete"
+
+#: lib/bookshelf_settings.lua:1473
+msgid ""
+"What the hero area at the top of the bookshelf shows when it opens: the book "
+"you're currently reading, or a grid of micro-modules (clock, quote, random "
+"book, reading goals…). You can also switch between them with the chips above "
+"the shelves."
+msgstr ""
+"Mit mutasson a könyvespolc tetején lévő hero area megnyitáskor: az éppen "
+"olvasott könyvet, vagy egy micromodule rácsot (óra, idézet, véletlenszerű "
+"könyv, olvasási célok…). A polcok feletti chipekkel is válthatsz közöttük."
+
+#: lib/bookshelf_settings.lua:2201
+msgid "Disable micro-modules"
+msgstr "Micromodule-ok letiltása"
+
+#: lib/bookshelf_settings.lua:2202
+msgid ""
+"Turns off the micro-module hero view and its chip, removes micro-modules "
+"from the start menu and its add menu, and hides the \"Hero area starts "
+"with\" setting. Your module configuration is kept, so re-enabling restores "
+"everything."
+msgstr ""
+"Kikapcsolja a micromodule hero nézetet és a hozzá tartozó chipet, eltávolítja "
+"a micromodule-okat a kezdőmenüből és a hozzáadás menüből, és elrejti a "
+"\"A hero area kezdőnézete\" beállítást. A modul-konfiguráció megmarad, "
+"így az újra engedélyezéssel minden visszaáll."
+
+#: lib/bookshelf_settings.lua:2682
+msgid "Columns: "
+msgstr "Oszlopok: "
+
+#: lib/bookshelf_settings.lua:2688
+msgid "Rows: "
+msgstr "Sorok: "
+
+#: lib/bookshelf_start_menu.lua:487
+msgid "%1 (disabled - tap to retry)"
+msgstr "%1 (letiltva – koppints az újrapróbáláshoz)"
+
+#: lib/bookshelf_start_menu_edit.lua:148
+msgid "Choose icon…"
+msgstr "Válassz ikont…"
+
+#: lib/bookshelf_start_menu_edit.lua:160
+msgid "Icon"
+msgstr "Ikon"
+
+#: lib/bookshelf_start_menu_edit.lua:168 micromodules/action.lua:237
+msgid "Icon…"
+msgstr "Ikon…"
+
+#: lib/bookshelf_start_menu_edit.lua:236
+msgid "Move to folder…"
+msgstr "Áthelyezés mappába…"
+
+#: lib/bookshelf_start_menu_edit.lua:253
+msgid "Move to folder"
+msgstr "Áthelyezés mappába"
+
+#: lib/bookshelf_widget.lua:6974
+msgid "Micro-modules"
+msgstr "Micromodule-ok"
+
+#: lib/bookshelf_widget.lua:6978
+msgid "Reset modules to default"
+msgstr "Modulok visszaállítása alapértelmezettre"
+
+#: lib/bookshelf_widget.lua:6983
+msgid "Disable micro-modules (re-enable from settings)"
+msgstr "Micromodule-ok letiltása (újra engedélyezhető a beállításokban)"
+
+#: micromodules/action.lua:51 micromodules/action.lua:86
+msgid "Action"
+msgstr "Művelet"
+
+#: micromodules/action.lua:52
+msgid "Launches a plugin or system action. Works offline."
+msgstr "Bővítményt vagy rendszerműveletet indít. Offline is működik."
+
+#: micromodules/action.lua:153
+msgid "Add action"
+msgstr "Művelet hozzáadása"
+
+#: micromodules/action.lua:197
+msgid "Change action…"
+msgstr "Művelet módosítása…"
+
+#: micromodules/action.lua:203
+msgid "Change action"
+msgstr "Művelet módosítása"
+
+#: micromodules/action.lua:216
+msgid "Label…"
+msgstr "Felirat…"
+
+#: micromodules/action.lua:219
+msgid "Card label (empty = icon only)"
+msgstr "Kártya felirata (üres = csak ikon)"
+
+#: micromodules/action.lua:246
+msgid "Action settings"
+msgstr "Művelet beállításai"
+
+#: micromodules/analogue_clock.lua:185 micromodules/clock.lua:65
+msgid "Device clock. Works offline."
+msgstr "Eszköz órája. Offline is működik."
+
+#: micromodules/daily_fun.lua:326
+msgid "Jokes, facts & riddles. Needs internet."
+msgstr "Viccek, érdekességek és találós kérdések. Internetkapcsolat szükséges."
+
+#: micromodules/on_this_day.lua:143
+msgid "From Wikipedia. Needs internet."
+msgstr "Forrás: Wikipédia. Internetkapcsolat szükséges."
+
+#: micromodules/quote_of_day.lua:278
+msgid "From your highlights. Works offline."
+msgstr "A saját kiemeléseidből. Offline is működik."
+
+#: micromodules/random_unread.lua:232 micromodules/shelf_size.lua:45
+msgid "From your library. Works offline."
+msgstr "A könyvtáradból. Offline is működik."
+
+#: micromodules/reading_goal.lua:533
+msgid "From your reading stats. Works offline."
+msgstr "Az olvasási statisztikáidból. Offline is működik."
+
+#: micromodules/reading_stats.lua:77
+msgid "From KOReader statistics. Works offline."
+msgstr "A KOReader statisztikáiból. Offline is működik."
+
+#: micromodules/reading_stats.lua:105 micromodules/reading_stats.lua:116
+msgid "%1 pages"
+msgstr "%1 oldal"
+
+#: micromodules/reading_stats.lua:105 micromodules/reading_stats.lua:115
+msgid "today"
+msgstr "ma"
+
+#: micromodules/reading_stats.lua:108
+msgid "This week"
+msgstr "Ezen a héten"
+
+#: micromodules/trivia.lua:316
+msgid "Open Trivia DB. Needs internet."
+msgstr "Forrás: Open Trivia DB. Internetkapcsolat szükséges."
+
+#: micromodules/weather.lua:337
+msgid "Open-Meteo. Needs internet."
+msgstr "Forrás: Open-Meteo. Internetkapcsolat szükséges."
