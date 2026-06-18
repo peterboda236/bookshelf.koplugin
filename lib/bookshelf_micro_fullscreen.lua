@@ -46,7 +46,9 @@ local MicroFullscreen = InputContainer:extend{
 -- Paint a custom X (two diagonal strokes) at the launching button's region, so
 -- the user sees a clear close target where the grid button was -- identical
 -- approach to the start menu's close indicator.
-local function _closeGlyph(bw, button_dimen)
+-- reserve_ring: leave room for a d-pad focus border so the glyph's outer size is
+-- the same focused or not. focused: draw the ring now (close button has focus).
+local function _closeGlyph(bw, button_dimen, reserve_ring, focused)
     if not (button_dimen and button_dimen.w and button_dimen.w > 0) then return nil end
     local bd       = button_dimen
     -- Centre the X in the VISUAL button height: the footer button's dimen has the
@@ -66,11 +68,18 @@ local function _closeGlyph(bw, button_dimen)
             b:paintRect(x + last - t, y + t, stroke, stroke, Blitbuffer.COLOR_BLACK)
         end
     end
+    -- Focus ring (border-swap, dimen-constant — matches the grid cells). Reserve
+    -- it whenever the close button is reachable by d-pad so focusing it doesn't
+    -- nudge the X; draw the border only when it actually holds focus.
+    local fb = reserve_ring and Screen:scaleBySize(2) or 0
     local frame = FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE,
-        bordersize = 0, padding = 0, margin = 0,
+        bordersize = focused and fb or 0,
+        margin     = focused and 0 or fb,
+        radius     = fb > 0 and Screen:scaleBySize(4) or 0,
+        padding    = 0,
         CenterContainer:new{
-            dimen = Geom:new{ w = bd.w, h = visual_h },
+            dimen = Geom:new{ w = math.max(1, bd.w - 2 * fb), h = math.max(1, visual_h - 2 * fb) },
             XWidget:new{},
         },
     }
@@ -90,6 +99,17 @@ end
 function MicroFullscreen:init()
     if Device:hasKeys() then
         self.key_events = { Close = { { Device.input.group.Back } } }
+    end
+    -- D-pad cell navigation (mirrors the start menu's focus nav, but 2D across
+    -- the grid). Gated on hasDPad so touch-only devices keep just Back/tap.
+    if Device:hasDPad() then
+        self.key_events.MFFocusUp    = { { "Up" } }
+        self.key_events.MFFocusDown  = { { "Down" } }
+        self.key_events.MFFocusLeft  = { { "Left" } }
+        self.key_events.MFFocusRight = { { "Right" } }
+        self.key_events.MFPress      = { { "Press" } }
+        self.key_events.MFHold = { { "ScreenKB", "Press" }, { "Shift", "Press" } }
+        self._dpad = true
     end
     -- Register so a module add/edit/remove rebuilds THIS overlay live: the edit
     -- reload path routes through HeroModules._rebuild, which checks this ref.
@@ -138,8 +158,19 @@ function MicroFullscreen:_build()
 
     -- Reflow ALL modules (not just the hero's current page): pass an explicit
     -- item list so build() bypasses its per-page assignment.
+    local items = HeroModel.load()
+    -- D-pad: keep the cursor on a module that's still present (seed to the first
+    -- on open, after an edit removes the focused one, etc.).
+    if self._dpad then
+        local present = false
+        for _i, it in ipairs(items) do
+            if it.id == self._cursor_id then present = true; break end
+        end
+        if not present then self._cursor_id = items[1] and items[1].id or nil end
+    end
     local ok, grid = pcall(HeroModules.build, self.bw, content_w, grid_h, PAD,
-        { items = HeroModel.load() })
+        { items = items, focusable = self._dpad or nil,
+          focused_id = (not self._focus_close) and self._cursor_id or nil })
     if not ok or not grid then
         grid = Widget:new{}  -- defensive: empty, still closeable
     end
@@ -165,7 +196,9 @@ function MicroFullscreen:_build()
     }
     -- Read the CURRENT footer button dimen (refreshed when the bookshelf behind
     -- rebuilds on resize), falling back to the open-time value.
-    local close_glyph = _closeGlyph(self.bw, (self.bw and self.bw._micromod_dimen) or self.button_dimen)
+    local close_glyph = _closeGlyph(self.bw,
+        (self.bw and self.bw._micromod_dimen) or self.button_dimen,
+        self._dpad, self._focus_close)
     if close_glyph then children[#children + 1] = close_glyph end
     self[1] = children
 end
@@ -184,6 +217,68 @@ end
 function MicroFullscreen:rebuildGrid()
     self:_build()
     UIManager:setDirty(self, "ui")
+end
+
+-- ── D-pad cell navigation ─────────────────────────────────────────────────────
+-- Move the focus cursor across the recorded row/col map and rebuild. Edges are
+-- no-ops here (the overlay is a closed workspace; Back exits), unlike the hero
+-- zone which hands focus back to the chips/shelf at its edges.
+function MicroFullscreen:_setFocusClose(on)
+    if self._focus_close == on then return end
+    self._focus_close = on
+    self:rebuildGrid()
+end
+function MicroFullscreen:_navCell(dir)
+    local HeroModules = require("lib/bookshelf_hero_modules")
+    return HeroModules.navMove(self.bw and self.bw._hero_grid_rows, self._cursor_id, dir)
+end
+function MicroFullscreen:_moveTo(dir)
+    local nid = self:_navCell(dir)
+    if nid and nid ~= self._cursor_id then self._cursor_id = nid; self:rebuildGrid() end
+end
+-- Up/Down cross between the grid and the close button (the single exit), so the
+-- X is reachable by d-pad, not only by Back. Left/Right stay within the grid.
+function MicroFullscreen:onMFFocusUp()
+    if self._focus_close then self:_setFocusClose(false) else self:_moveTo("up") end
+    return true
+end
+function MicroFullscreen:onMFFocusDown()
+    if self._focus_close then return true end
+    if self:_navCell("down") then self:_moveTo("down") else self:_setFocusClose(true) end
+    return true
+end
+function MicroFullscreen:onMFFocusLeft()
+    if not self._focus_close then self:_moveTo("left") end
+    return true
+end
+function MicroFullscreen:onMFFocusRight()
+    if not self._focus_close then self:_moveTo("right") end
+    return true
+end
+
+-- Press / Hold act on the focused cell exactly as a tap / long-press would.
+function MicroFullscreen:_focusedRec()
+    return self.bw and self.bw._hero_cells and self._cursor_id
+        and self.bw._hero_cells[self._cursor_id] or nil
+end
+function MicroFullscreen:onMFPress()
+    if self._focus_close then return self:onTapClose() end
+    local HeroModules = require("lib/bookshelf_hero_modules")
+    local rec = self:_focusedRec()
+    if rec and rec.entry then
+        HeroModules._tap(self.bw, rec.entry,
+            function() HeroModules._reloadCellById(self.bw, rec.entry.id) end)
+    end
+    return true
+end
+function MicroFullscreen:onMFHold()
+    if self._focus_close then return true end
+    local HeroModules = require("lib/bookshelf_hero_modules")
+    local rec = self:_focusedRec()
+    if rec and rec.entry and HeroModules._hold then
+        HeroModules._hold(self.bw, rec.entry)
+    end
+    return true
 end
 
 local function _clearRef(self)

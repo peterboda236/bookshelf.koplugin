@@ -83,11 +83,21 @@ end
 -- just that cell. The cell is an InputContainer (carries a .dimen on paint),
 -- so per-cell scoping works (unlike the grid VerticalGroup). Does NOT setDirty
 -- — the caller refreshes (single cell, or a union for the clock tick).
+-- The currently focused cell id, from whichever host owns the grid (the
+-- full-screen overlay, else the bookshelf hero zone). Lets an in-place async
+-- re-render keep the focus ring instead of dropping it.
+function HeroModules._activeCursor(bw)
+    if bw and bw._micro_fullscreen then return bw._micro_fullscreen._cursor_id end
+    return bw and bw._hero_cell_cursor
+end
+
 function HeroModules._swapCell(bw, rec)
     local hg  = rec and rec.group
     local old = hg and hg[rec.idx]
     if not old then return nil end
-    hg[rec.idx] = HeroModules._makeCell(bw, rec.entry, rec.w, rec.h, rec.scale)
+    local focused = rec.focusable and HeroModules._activeCursor(bw) == rec.entry.id
+    hg[rec.idx] = HeroModules._makeCell(bw, rec.entry, rec.w, rec.h, rec.scale,
+        rec.focusable, focused)
     if hg.resetLayout then hg:resetLayout() end
     if old.free then
         UIManager:nextTick(function() pcall(function() old:free() end) end)
@@ -284,8 +294,44 @@ end
 -- quote) can fill the cell instead of clamping to a fixed line count; modules
 -- that ignore it render at their natural height, auto-fitted down (above) and
 -- centred.
-function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct)
+-- 2D grid navigation over a recorded row/col map (bw._hero_grid_rows: a list of
+-- rows, each a list of entry ids). Returns the id to move to for the given
+-- direction, or nil when the cursor is at the grid edge in that direction (the
+-- caller decides what an edge means: the overlay stays put, the hero zone exits
+-- to the chips/shelf). Up/Down keep the column where possible, clamping to the
+-- shorter row. An unknown cursor lands on the first cell.
+function HeroModules.navMove(rows, cur_id, dir)
+    if not rows or #rows == 0 then return nil end
+    local cr, cc
+    for r, row in ipairs(rows) do
+        for c, id in ipairs(row) do
+            if id == cur_id then cr, cc = r, c; break end
+        end
+        if cr then break end
+    end
+    if not cr then return rows[1] and rows[1][1] or nil end
+    if dir == "left" then
+        if cc > 1 then return rows[cr][cc - 1] end
+    elseif dir == "right" then
+        if cc < #rows[cr] then return rows[cr][cc + 1] end
+    elseif dir == "up" then
+        if cr > 1 then local p = rows[cr - 1]; return p[math.min(cc, #p)] end
+    elseif dir == "down" then
+        if cr < #rows then local n = rows[cr + 1]; return n[math.min(cc, #n)] end
+    end
+    return nil
+end
+
+-- focusable: reserve a d-pad focus ring (border-swap, dimen-constant — matches
+-- the start-menu rows and chip cursor). focused: draw it on this cell now.
+function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct, focusable, focused)
     local radius   = Screen:scaleBySize(4)
+    -- Reserve the focus ring up front so a cell's content area is the same
+    -- whether or not it's focused (no reflow as the cursor moves). Touch builds
+    -- pass focusable=false, so they're byte-for-byte unchanged.
+    local focus_b  = focusable and Screen:scaleBySize(2) or 0
+    cell_w = math.max(1, cell_w - 2 * focus_b)
+    cell_h = math.max(1, cell_h - 2 * focus_b)
     -- Padding scales with the (cell-derived) font scale: bigger / squarer
     -- cells get more breathing room, small cells stay tight. Floored at 6px.
     local card_pad = Screen:scaleBySize(math.max(6, math.floor(8 * (scale_pct or 100) / 100 + 0.5)))
@@ -363,7 +409,22 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct)
             content,
         },
     }
-    local cell = InputContainer:new{ dimen = frame:getSize(), frame }
+    -- Wrap in a focus ring when navigable: border when focused, equal margin at
+    -- rest, so the outer dimen stays cell_w/cell_h either way (the swap the chips
+    -- and start-menu rows use). Keep `frame` pointing at the inner card so the
+    -- press-feedback closure below still toggles the card's own border.
+    local outer = frame
+    if focus_b > 0 then
+        outer = FrameContainer:new{
+            background = nil,
+            bordersize = focused and focus_b or 0,
+            margin     = focused and 0 or focus_b,
+            radius     = radius,
+            padding    = 0,
+            frame,
+        }
+    end
+    local cell = InputContainer:new{ dimen = outer:getSize(), outer }
     if Device:isTouchDevice() then
         cell.ges_events = {
             Tap  = { GestureRange:new{ ges = "tap",  range = cell.dimen } },
@@ -691,9 +752,14 @@ function HeroModules.build(bw, content_w, hero_h, PAD, opts)
     -- only ever touch on-screen modules.
     bw._hero_cells = {}
     bw._hero_clock_cells = {}
+    -- Row/col map of entry ids for d-pad navigation (HeroModules.navMove). Only
+    -- the module cells are recorded; chevrons are edge actions, not focus stops.
+    bw._hero_grid_rows = {}
 
     local vg = VerticalGroup:new{ align = "center" }
     for r, row in ipairs(rows_list) do
+        local nav_row = {}
+        bw._hero_grid_rows[#bw._hero_grid_rows + 1] = nav_row
         -- Chevrons sit IN the grid: prev before the first module of the first
         -- row, next after the last module of the last row, each vertically
         -- centred in its row. They take a thin slot, so that row's modules
@@ -718,10 +784,14 @@ function HeroModules.build(bw, content_w, hero_h, PAD, opts)
         for c, entry in ipairs(row) do
             if c > 1 then hg[#hg + 1] = HorizontalSpan:new{ width = gap } end
             local cell_w = widths[c]
-            hg[#hg + 1] = HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct)
+            local focused = opts.focused_id ~= nil and entry.id == opts.focused_id
+            hg[#hg + 1] = HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct,
+                opts.focusable, focused)
+            if entry.id then nav_row[#nav_row + 1] = entry.id end
             local rec = {
                 group = hg, idx = #hg, entry = entry,
                 w = cell_w, h = cell_h, scale = scale_pct,
+                focusable = opts.focusable,
             }
             if entry.id then bw._hero_cells[entry.id] = rec end
             local def = Modules.get(entry.module)

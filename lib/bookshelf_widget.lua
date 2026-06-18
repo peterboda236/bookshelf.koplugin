@@ -3076,8 +3076,55 @@ end
 -- build the same structure. Falls back to a bare grid when the status region
 -- is disabled / empty (buildStatusRow returns nil). The grid is sized to the
 -- height left under the status line so the whole thing still fits hero_h.
+-- D-pad build opts for the in-hero micro grid: reserve the focus ring on any
+-- d-pad device (so moving focus in/out of the hero never resizes cells), and
+-- draw it on the cursor cell only while the hero zone holds focus.
+function BookshelfWidget:_microHeroOpts()
+    local dpad = Device:hasDPad()
+    return {
+        focusable  = dpad or nil,
+        focused_id = (dpad and self._focus_zone == "hero")
+                     and self._hero_cell_cursor or nil,
+    }
+end
+
+-- True when the hero zone is a navigable micro-module grid (d-pad device,
+-- micro placement, grid showing). The book hero and expanded strip keep their
+-- existing single-unit focus behaviour.
+function BookshelfWidget:_heroIsMicroGrid()
+    return Device:hasDPad() and self._hero_mode == "micro" and not self._expanded
+end
+
+-- Enter the hero zone onto its micro grid. Focus always arrives from below (the
+-- chips or book grid), so seed the cursor on the bottom row, nearest column.
+function BookshelfWidget:_enterHeroMicro(col_hint)
+    self._focus_zone = "hero"
+    local rows = self._hero_grid_rows
+    local last = rows and rows[#rows]
+    if last and #last > 0 then
+        self._hero_cell_cursor = last[math.min(col_hint or 1, #last)]
+    else
+        self._hero_cell_cursor = nil
+    end
+    self:_swapMicroHeroInPlace()
+end
+
+-- Move the hero-grid cursor. Returns true if it moved within the grid, false at
+-- the edge (the caller then runs the normal zone transition / stays put).
+function BookshelfWidget:_heroMicroNav(dir)
+    local HeroModules = require("lib/bookshelf_hero_modules")
+    local nid = HeroModules.navMove(self._hero_grid_rows, self._hero_cell_cursor, dir)
+    if nid and nid ~= self._hero_cell_cursor then
+        self._hero_cell_cursor = nid
+        self:_swapMicroHeroInPlace()
+        return true
+    end
+    return false
+end
+
 function BookshelfWidget:_buildMicroHero(content_w, hero_h, PAD)
     local HeroModules = require("lib/bookshelf_hero_modules")
+    local mopts = self:_microHeroOpts()
     -- Same current-book resolution as _buildExpandedStrip; the status row only
     -- needs the book for its progress/title tokens (device tokens come from
     -- _buildDeviceState).
@@ -3091,7 +3138,7 @@ function BookshelfWidget:_buildMicroHero(content_w, hero_h, PAD)
     local status_row = HeroCard.buildStatusRow(current, self:_buildDeviceState(),
                                                content_w, true)
     if not status_row then
-        return HeroModules.build(self, content_w, hero_h, PAD)
+        return HeroModules.build(self, content_w, hero_h, PAD, mopts)
     end
     local VerticalSpan = require("ui/widget/verticalspan")
     -- Tight gap under the status line (half the hero PAD); a full PAD read as
@@ -3102,7 +3149,7 @@ function BookshelfWidget:_buildMicroHero(content_w, hero_h, PAD)
         align = "left",
         status_row,
         VerticalSpan:new{ width = gap },
-        HeroModules.build(self, content_w, grid_h, PAD),
+        HeroModules.build(self, content_w, grid_h, PAD, mopts),
     }
 end
 
@@ -4574,9 +4621,14 @@ end
 -- behind the listing" after swiping up while covers are still loading.
 function BookshelfWidget:_swapHeroInPlace()
     -- While the module grid is showing (micro + not expanded) there's no book
-    -- hero to swap; mode switches go through a full _rebuild. When expanded
-    -- the slot holds the same status strip as book mode, so let it through.
-    if self._hero_mode == "micro" and not self._expanded then return end
+    -- hero to swap; re-render the GRID instead so a d-pad focus-ring change
+    -- (entering/leaving the hero zone, moving the cell cursor) shows. Mode
+    -- switches still go through a full _rebuild. When expanded the slot holds
+    -- the same status strip as book mode, so let it through.
+    if self._hero_mode == "micro" and not self._expanded then
+        self:_swapMicroHeroInPlace()
+        return
+    end
     if not self._hero_parent or not self._hero_dims then return end
     local d = self._hero_dims
     local new_hero
@@ -5252,6 +5304,13 @@ function BookshelfWidget:onBSFocusUp()
         return true
     end
 
+    -- Hero micro grid: step up a row; at the top row stay put (hero is the
+    -- topmost zone).
+    if self._focus_zone == "hero" and self:_heroIsMicroGrid() then
+        self:_heroMicroNav("up")
+        return true
+    end
+
     if self._focus_zone == "grid" then
         local n_cols = self:_nCols()
         if self._cursor_idx and self._cursor_idx <= n_cols then
@@ -5271,10 +5330,14 @@ function BookshelfWidget:onBSFocusUp()
                         self._chip_bar:focusCursor(self._chip_cursor_key)
                     end
                 end
+            elseif self:_heroIsMicroGrid() then
+                -- Micro grid: enter the hero and land on its bottom row.
+                self._cursor_idx = nil
+                self:_swapShelvesInPlace()   -- clear cursor border from grid
+                self:_enterHeroMicro()
             elseif not self._expanded and self._hero_mode ~= "micro" then
-                -- Micro mode has no focusable book hero (the grid cells are
-                -- tap/hold targets, not d-pad stops), so skip the hero zone
-                -- just like expanded mode does.
+                -- Book hero is a single focusable unit; the expanded strip and
+                -- non-d-pad micro mode have no focusable hero, so skip it.
                 self._focus_zone = "hero"
                 self._cursor_idx = nil
                 self:_swapShelvesInPlace()   -- clear cursor border from grid
@@ -5295,8 +5358,12 @@ function BookshelfWidget:onBSFocusUp()
             end
             self._chip_cursor_key    = nil
             self._crumb_cursor_depth = nil
-            self._focus_zone         = "hero"
-            self:_swapHeroInPlace()
+            if self:_heroIsMicroGrid() then
+                self:_enterHeroMicro()
+            else
+                self._focus_zone = "hero"
+                self:_swapHeroInPlace()
+            end
         end
         return true
     end
@@ -5344,6 +5411,11 @@ function BookshelfWidget:onBSFocusDown()
     end
 
     if self._focus_zone == "hero" then
+        -- Micro grid: step down a row first; only leave the hero (to chips /
+        -- grid) once the cursor is on the bottom row.
+        if self:_heroIsMicroGrid() and self:_heroMicroNav("down") then
+            return true
+        end
         self._focus_zone = nil
         self:_swapHeroInPlace()
         if not self._chip_bar_hidden then
@@ -5479,6 +5551,13 @@ function BookshelfWidget:onBSFocusLeft()
         return true
     end
 
+    -- Hero micro grid: move to the previous cell in the row; stay put at the
+    -- left edge (the hero is a closed 2D field — Back leaves it).
+    if self._focus_zone == "hero" and self:_heroIsMicroGrid() then
+        self:_heroMicroNav("left")
+        return true
+    end
+
     if self._focus_zone == "grid" then
         return self:_moveCursor(-1)
     end
@@ -5541,6 +5620,13 @@ function BookshelfWidget:onBSFocusRight()
         return true
     end
 
+    -- Hero micro grid: move to the next cell in the row; stay put at the right
+    -- edge.
+    if self._focus_zone == "hero" and self:_heroIsMicroGrid() then
+        self:_heroMicroNav("right")
+        return true
+    end
+
     if self._focus_zone == "grid" then
         return self:_moveCursor(1)
     end
@@ -5597,6 +5683,17 @@ end
 
 function BookshelfWidget:onBSKbPress()
     if self._focus_zone == "hero" then
+        -- Micro grid: activate the focused cell exactly as a tap would.
+        if self:_heroIsMicroGrid() then
+            local HeroModules = require("lib/bookshelf_hero_modules")
+            local rec = self._hero_cell_cursor and self._hero_cells
+                        and self._hero_cells[self._hero_cell_cursor]
+            if rec and rec.entry then
+                HeroModules._tap(self, rec.entry,
+                    function() HeroModules._reloadCellById(self, rec.entry.id) end)
+            end
+            return true
+        end
         local book = self._preview_book
             or self:_currentHeroBook()
         if book then
@@ -5770,6 +5867,17 @@ end
 --           the Pin / Add / Remove dialog.
 function BookshelfWidget:onBSKbHold()
     if self._focus_zone == "hero" then
+        -- Micro grid: long-press the focused cell (opens the module's edit /
+        -- pin / remove menu, same as a touch hold).
+        if self:_heroIsMicroGrid() then
+            local HeroModules = require("lib/bookshelf_hero_modules")
+            local rec = self._hero_cell_cursor and self._hero_cells
+                        and self._hero_cells[self._hero_cell_cursor]
+            if rec and rec.entry and HeroModules._hold then
+                HeroModules._hold(self, rec.entry)
+            end
+            return true
+        end
         if self._selection and self._selection:isActive() then return true end
         local book = self._preview_book
             or self:_currentHeroBook()
@@ -7236,6 +7344,7 @@ function BookshelfWidget:_clearDpadFocus()
     self._crumb_cursor_depth = nil
     self._footer_cursor_btn  = nil
     self._sel_overlay_slot   = nil
+    self._hero_cell_cursor   = nil
     if self._chip_bar and self._chip_bar.focusCursor then
         self._chip_bar:focusCursor(nil)
     end
