@@ -1,6 +1,6 @@
 --[[
 Start-menu module: reading streak.
-Shows the current consecutive-day and best (wide view) reading streak from KOReader's
+Shows the current consecutive-day and best reading streak from KOReader's
 statistics plugin database (statistics.sqlite3).
 ]]
 local _ = require("lib/bookshelf_i18n").gettext
@@ -259,7 +259,8 @@ return {
                     width     = half,
                     scale_pct = scale_pct,
                     heading   = _("Reading streak"),
-                    value     = dayText(s.current),
+                    value     = tostring(s.current),
+                    suffix    = " " .. (s.current == 1 and _("day") or _("days")),
                     sub       = weekText(s.current_weeks),
                 },
                 HorizontalSpan:new{ width = gap },
@@ -267,19 +268,21 @@ return {
                     width     = half,
                     scale_pct = scale_pct,
                     heading   = _("Best streak"),
-                    value     = dayText(s.best),
+                    value     = tostring(s.best),
+                    suffix    = " " .. (s.best == 1 and _("day") or _("days")),
                     sub       = weekText(s.best_weeks),
                 },
             }
         end
 
-        -- Normál (nem wide) nézet: aktuális nap + hét mint context
         return Kit.valueCard{
             width     = mw,
             scale_pct = scale_pct,
             heading   = _("Reading streak"),
-            value     = dayText(s.current),
-            context   = weekText(s.current_weeks),
+            value     = tostring(s.current),
+            suffix    = " " .. (s.current == 1 and _("day") or _("days")),
+            sub       = weekText(s.current_weeks),
+            context   = T(_("Best: %1 · %2"), dayText(s.best), weekText(s.best_weeks)),
         }
     end,
     show_settings = showSettings,
