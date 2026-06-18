@@ -2766,6 +2766,72 @@ function Settings:_pickFontScale(touchmenu_instance)
     UIManager:show(dialog)
 end
 
+-- Hero micro-modules size knob (issue #180). Same nudge-dialog shape as
+-- _pickFontScale, but a SEPARATE key so the micro-module grid scales
+-- independently of the currently-reading card / status line. It's a multiplier
+-- on each module's cell auto-fit (100 = unchanged), so lower renders the modules
+-- smaller with more whitespace. Live preview = the bookshelf rebuild behind.
+function Settings:_pickHeroModuleFontScale(touchmenu_instance)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local key = "hero_module_font_scale"
+    local original = BookshelfSettings.read(key, 100)
+    local restoreMenu = self._plugin:hideMenu(touchmenu_instance)
+
+    local function getValue() return BookshelfSettings.read(key, 100) end
+    local function setValue(v)
+        v = math.max(50, math.min(200, v))
+        BookshelfSettings.save(key, v)
+    end
+    local function rebuild()
+        if Settings._bw and Settings._bw._rebuild then
+            Settings._bw:_rebuild()
+            UIManager:setDirty(Settings._bw, "ui")
+        end
+        if touchmenu_instance and touchmenu_instance.updateItems then
+            touchmenu_instance:updateItems()
+        end
+    end
+
+    local dialog
+    local function nudge(delta)
+        setValue(getValue() + delta)
+        rebuild()
+        Focus.reinit(dialog)
+    end
+    local function close()
+        UIManager:close(dialog)
+        restoreMenu()
+    end
+    local function revert()
+        setValue(original)
+        rebuild()
+    end
+
+    dialog = ButtonDialog:new{
+        dismissable = false,
+        title = _("Hero micro-modules font scale"),
+        buttons = {
+            {
+                { text = "-10",  callback = function() nudge(-10) end },
+                { text = "-5",   callback = function() nudge(-5)  end },
+                { text_func = function() return tostring(getValue()) .. "%" end,
+                  enabled = false },
+                { text = "+5",   callback = function() nudge(5)   end },
+                { text = "+10",  callback = function() nudge(10)  end },
+            },
+            {
+                { text = _("Cancel"), callback = function() revert(); close() end },
+                { text = _("Default"),
+                  callback = function() setValue(100); rebuild(); Focus.reinit(dialog) end },
+                { text = _("Apply"), is_enter_default = true, callback = close },
+            },
+        },
+        tap_close_callback = revert,
+    }
+    if dialog.movable then dialog.movable.ges_events = {} end
+    UIManager:show(dialog)
+end
+
 -- Bookends-style nudge dialog for the chip-strip font scale. Same shape as
 -- _pickFontScale but lives in its own method so the live preview only kicks
 -- the rebuild path bookshelf needs and the +/- step sizes can match the
@@ -3012,6 +3078,7 @@ function Settings:_textSizeSubItems()
     end
     return {
         row(_("Hero card"),             "font_scale",                100, "_pickFontScale"),
+        row(_("Hero micro-modules"),    "hero_module_font_scale",    100, "_pickHeroModuleFontScale"),
         row(_("Chip bar"),              "chip_font_scale",           100, "_pickChipFontScale"),
         row(_("Stack & folder labels"), "stack_label_font_scale",    100, "_pickStackLabelFontScale"),
         row(_("Expanded shelf labels"), "expanded_shelf_font_scale", 100, "_pickExpandedShelfFontScale"),

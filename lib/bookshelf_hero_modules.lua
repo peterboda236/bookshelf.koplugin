@@ -38,6 +38,7 @@ local Modules         = require("lib/bookshelf_start_menu_modules")
 local HeroModel       = require("lib/bookshelf_hero_modules_model")
 local BFont           = require("lib/bookshelf_fonts")
 local Breaker         = require("lib/bookshelf_module_breaker")
+local BookshelfSettings = require("lib/bookshelf_settings_store")
 local _               = require("lib/bookshelf_i18n").gettext
 local T               = require("ffi/util").template
 
@@ -168,7 +169,7 @@ local GROW_MAX_ITERS = 5
 -- Comfortable fill target: grow an under-filled card until it reaches ~90% of a
 -- cell dimension, leaving breathing room (not edge-to-edge).
 local FILL_TARGET    = 0.90
-local function _renderFitted(def, inner_w, inner_h, base_scale, refresh, entry)
+local function _renderFitted(def, inner_w, inner_h, base_scale, refresh, entry, user_mult)
     local base  = base_scale or 100
     -- Absolute size range for any cell, independent of the (now fixed) base:
     -- shrink to 60% (legibility floor; ClipContainer backstops anything worse),
@@ -190,6 +191,7 @@ local function _renderFitted(def, inner_w, inner_h, base_scale, refresh, entry)
     local widget, h, w = renderAt(base)
     if not widget then return nil end  -- render error: caller draws the fallback
 
+    local result, result_scale
     if h <= inner_h and w <= inner_w then
         -- Fits at the grid scale. Markedly under-filled in HEIGHT? Grow the
         -- font to use the space, keeping the largest scale that still fits.
@@ -215,36 +217,54 @@ local function _renderFitted(def, inner_w, inner_h, base_scale, refresh, entry)
                     break
                 end
             end
-            return best
+            result, result_scale = best, cur
+        else
+            result, result_scale = widget, base
         end
-        return widget
+    else
+        -- Overflows the grid scale: shrink. `best` keeps the latest (smallest)
+        -- render so a module that never quite fits still returns a (clipped)
+        -- widget, never nil; ClipContainer backstops any residual overflow. Step
+        -- by scale/sqrt(overflow) — a text block's height grows ~with font area,
+        -- so sqrt undoes most of the overshoot in one step.
+        local best, best_scale, prev_h, scale = widget, base, h, base
+        for _i = 1, FIT_MAX_ITERS do
+            if scale <= floor then break end
+            local ratio = math.max(h / inner_h, w / inner_w)
+            local nxt = math.floor(scale / math.sqrt(ratio))
+            if nxt >= scale then nxt = scale - 5 end  -- always progress
+            scale = math.max(floor, nxt)
+            local sw, sh, swid = renderAt(scale)
+            if not sw then break end
+            if best.free then pcall(function() best:free() end) end
+            best, best_scale, h, w = sw, scale, sh, swid
+            -- Fits now, hit the floor, or shrinking stopped reducing height (a
+            -- height-aware module fills avail_h whatever the scale): stop.
+            if (h <= inner_h and w <= inner_w) or scale <= floor
+                    or (prev_h and h >= prev_h) then
+                break
+            end
+            prev_h = h
+        end
+        result, result_scale = best, best_scale
     end
 
-    -- Overflows the grid scale: shrink. `best` keeps the latest (smallest)
-    -- render so a module that never quite fits still returns a (clipped)
-    -- widget, never nil; ClipContainer backstops any residual overflow. Step by
-    -- scale/sqrt(overflow) — a text block's height grows ~with font area, so
-    -- sqrt undoes most of the overshoot in one step.
-    local best, prev_h, scale = widget, h, base
-    for _i = 1, FIT_MAX_ITERS do
-        if scale <= floor then break end
-        local ratio = math.max(h / inner_h, w / inner_w)
-        local nxt = math.floor(scale / math.sqrt(ratio))
-        if nxt >= scale then nxt = scale - 5 end  -- always progress
-        scale = math.max(floor, nxt)
-        local sw, sh, swid = renderAt(scale)
-        if not sw then break end
-        if best.free then pcall(function() best:free() end) end
-        best, h, w = sw, sh, swid
-        -- Fits now, hit the floor, or shrinking stopped reducing height (a
-        -- height-aware module fills avail_h whatever the scale): stop.
-        if (h <= inner_h and w <= inner_w) or scale <= floor
-                or (prev_h and h >= prev_h) then
-            break
+    -- Issue #180: apply the user's "Hero micro-modules" size multiplier to the
+    -- fitted scale. Default 100 = unchanged (the auto-fit result). Lower renders
+    -- below the cell fill (smaller text, more whitespace — the requested "make
+    -- them smaller"); higher grows past it (ClipContainer backstops overflow).
+    user_mult = user_mult or 100
+    if result and result_scale and user_mult ~= 100 then
+        local adj = math.max(10, math.floor(result_scale * user_mult / 100 + 0.5))
+        if adj ~= result_scale then
+            local rw = renderAt(adj)
+            if rw then
+                if result.free then pcall(function() result:free() end) end
+                result = rw
+            end
         end
-        prev_h = h
     end
-    return best
+    return result
 end
 
 -- One module card: a rounded grey panel (no border) with the module's fresh
@@ -293,8 +313,11 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct)
         -- here too. The uncatchable text-shaping segfault (issue #163) is
         -- prevented upstream by safeText; the file marker armed in build() is
         -- the recovery net if one still slips through during the hero paint.
+        -- User size knob for hero micro-modules (issue #180), default 100 — a
+        -- multiplier on the cell auto-fit, independent of the Hero card text size.
+        local user_mult = BookshelfSettings.read("hero_module_font_scale", 100)
         local ok, c = Breaker.guard(function()
-            return _renderFitted(def, text_w, inner_h, scale_pct, refresh, entry)
+            return _renderFitted(def, text_w, inner_h, scale_pct, refresh, entry, user_mult)
         end)
         content = ok and c or nil
         errored = not ok
