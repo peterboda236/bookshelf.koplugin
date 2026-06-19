@@ -54,16 +54,18 @@ local ModulePicker = {}
 function ModulePicker._networkInfo(def, w)
     local TextWidget = require("ui/widget/textwidget")
     local muted = Modules.COLOR_MUTED or Blitbuffer.COLOR_DARK_GRAY
-    local hf, hb = BFont:getFace("cfont", 13, { bold = true })
+    local hf, hb = BFont:getFace("cfont", 15, { bold = true })
     local g = VerticalGroup:new{ align = "left" }
     g[#g + 1] = TextWidget:new{ text = _("Network required"),
         face = hf, bold = hb, fgcolor = Blitbuffer.COLOR_BLACK, max_width = w }
     g[#g + 1] = VerticalSpan:new{ width = Screen:scaleBySize(4) }
+    -- Secondary text bumped from 11 to 13: the muted source line was hard to
+    -- read at the smaller size on e-ink.
     g[#g + 1] = TextWidget:new{ text = _("Data provided by:"),
-        face = BFont:getFace("cfont", 11), fgcolor = muted, max_width = w }
+        face = BFont:getFace("cfont", 13), fgcolor = muted, max_width = w }
     for _i, domain in ipairs(def.network) do
         g[#g + 1] = TextWidget:new{ text = "\xE2\x80\xA2 " .. domain,
-            face = BFont:getFace("cfont", 11), fgcolor = muted, max_width = w }
+            face = BFont:getFace("cfont", 13), fgcolor = muted, max_width = w }
     end
     return g
 end
