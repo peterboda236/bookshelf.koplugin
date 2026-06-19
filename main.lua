@@ -1043,8 +1043,15 @@ function Bookshelf:_openReaderMicroModules()
         FOOTER_HIT_EXTENSION = FooterGeom.hitExtension(),
         FOOTER_STROKE_W      = FooterGeom.barMetrics().bar_t,
         _hero_cells          = {},
-        _micromod_dimen      = ReaderButtons.gridTapRect(grid_side),
-        _burger_dimen        = ReaderButtons.tapRect(side),
+        -- Use the REAL footer button frames (remembered from shelf mode) so the
+        -- overlay's close-X / hamburger land exactly where they do on the home
+        -- screen -- the close glyph centres in the full frame (h minus the hit
+        -- extension), not the small tap box. Fall back to the tap rects only
+        -- before the bookshelf has been shown this session.
+        _micromod_dimen      = FooterGeom.rememberedGridRect()
+                               or ReaderButtons.gridTapRect(grid_side),
+        _burger_dimen        = FooterGeom.rememberedButtonRect()
+                               or ReaderButtons.tapRect(side),
         _startMenuPosition   = function()
             local p = BookshelfSettings.read("start_menu_position", "left")
             return (p == "right" or p == "off") and p or "left"
@@ -1064,7 +1071,11 @@ function Bookshelf:_openReaderStartMenu()
     local Screen = require("device").screen
     local side = BookshelfSettings.read("start_menu_position", "left")
     if side ~= "right" then side = "left" end
-    local g = require("lib/bookshelf_reader_buttons").tapRect(side)
+    -- Real footer hamburger frame (remembered from shelf mode) so the start
+    -- menu's close-X lands where it does on the home screen; tap-rect fallback
+    -- before the bookshelf has been shown this session.
+    local g = require("lib/bookshelf_footer_geom").rememberedButtonRect()
+              or require("lib/bookshelf_reader_buttons").tapRect(side)
     pcall(function() StartMenu.open(nil, Screen:scaleBySize(48), g, "reader") end)
 end
 
