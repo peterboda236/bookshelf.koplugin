@@ -68,14 +68,32 @@ end
 -- -- no drift, and rotation / resize / setting changes propagate for free. nil
 -- until the bookshelf has been shown once this session (then the reader falls
 -- back to the computed startMenuBarsRect).
-local _remembered  -- { x, y, w, h } of the button frame (InputContainer dimen)
+-- _remembered = { rect = {x,y,w,h}, side = "left"|"right" } -- the side the
+-- footer painted it on, so the reader can MIRROR it when its own
+-- start_menu_position differs (the footer is symmetric, so the mirror is exact
+-- -- this is what makes a left/right flip move the reader launcher even though
+-- the bookshelf hasn't repainted at the new side).
+local _remembered
+local function startMenuSide()
+    local p = require("lib/bookshelf_settings_store").read("start_menu_position", "left")
+    return (p == "right") and "right" or "left"
+end
+-- Mirror a remembered rect to want_side if it was stored for the other side.
+local function rectForSide(stored, want_side)
+    if not stored then return nil end
+    local r = stored.rect
+    if stored.side == want_side then return { x = r.x, y = r.y, w = r.w, h = r.h } end
+    return { x = Screen:getWidth() - r.x - r.w, y = r.y, w = r.w, h = r.h }
+end
 function M.rememberButtonRect(d)
     if d and d.x and d.w and d.w > 0 then
-        _remembered = { x = d.x, y = d.y, w = d.w, h = d.h }
+        _remembered = { rect = { x = d.x, y = d.y, w = d.w, h = d.h }, side = startMenuSide() }
     end
 end
-function M.rememberedButtonRect()
-    return _remembered
+-- Rect for the hamburger on `side` (mirrored from the remembered one if it was
+-- painted on the other side); nil until the bookshelf has been shown.
+function M.rememberedButtonRect(side)
+    return rectForSide(_remembered, side or startMenuSide())
 end
 
 -- Grid (micro-module) button glyph metrics, mirroring _buildMicroModuleIcon:
@@ -111,16 +129,20 @@ function M.paintGrid(bb, x, oy)
     end
 end
 
--- Real painted rect of the footer micro-module (grid) button, remembered like
--- the start-menu button so the reader grid launcher matches it exactly.
+-- Real painted rect of the footer micro-module (grid) button + the side it was
+-- on (opposite the start menu), so the reader grid launcher mirrors it on a flip.
 local _remembered_grid
+local function gridSide()
+    local p = require("lib/bookshelf_settings_store").read("start_menu_position", "left")
+    return (p == "left") and "right" or ((p == "right") and "left" or "right")
+end
 function M.rememberGridRect(d)
     if d and d.x and d.w and d.w > 0 then
-        _remembered_grid = { x = d.x, y = d.y, w = d.w, h = d.h }
+        _remembered_grid = { rect = { x = d.x, y = d.y, w = d.w, h = d.h }, side = gridSide() }
     end
 end
-function M.rememberedGridRect()
-    return _remembered_grid
+function M.rememberedGridRect(side)
+    return rectForSide(_remembered_grid, side or gridSide())
 end
 
 -- Left x + top y for painting the grid glyph, from the remembered frame when
@@ -130,7 +152,7 @@ function M.launcherGridAnchor(width, height, side)
     width  = width or Screen:getWidth()
     height = height or Screen:getHeight()
     local g = M.gridMetrics()
-    local rect = _remembered_grid
+    local rect = M.rememberedGridRect(side) -- mirrored to `side` if needed
     if rect then
         local cx = rect.x + math.floor(rect.w / 2)
         local oy = rect.y + M.focusBorder() + math.floor((g.art - g.H) / 2)
@@ -152,7 +174,7 @@ end
 -- centre x and top y.
 function M.launcherBarsAnchor(width, height, side)
     local m   = M.barMetrics()
-    local rect = _remembered
+    local rect = M.rememberedButtonRect(side) -- mirrored to `side` if needed
     if rect then
         -- Bars are centred in the frame; the frame reserves focusBorder() of
         -- margin above the bars and hitExtension() of padding below them.

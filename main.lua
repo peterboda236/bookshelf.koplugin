@@ -1072,9 +1072,9 @@ function Bookshelf:_openReaderMicroModules()
         -- screen -- the close glyph centres in the full frame (h minus the hit
         -- extension), not the small tap box. Fall back to the tap rects only
         -- before the bookshelf has been shown this session.
-        _micromod_dimen      = FooterGeom.rememberedGridRect()
+        _micromod_dimen      = FooterGeom.rememberedGridRect(grid_side)
                                or ReaderButtons.gridTapRect(grid_side),
-        _burger_dimen        = FooterGeom.rememberedButtonRect()
+        _burger_dimen        = FooterGeom.rememberedButtonRect(side)
                                or ReaderButtons.tapRect(side),
         _startMenuPosition   = function()
             local p = BookshelfSettings.read("start_menu_position", "left")
@@ -1098,7 +1098,7 @@ function Bookshelf:_openReaderStartMenu()
     -- Real footer hamburger frame (remembered from shelf mode) so the start
     -- menu's close-X lands where it does on the home screen; tap-rect fallback
     -- before the bookshelf has been shown this session.
-    local g = require("lib/bookshelf_footer_geom").rememberedButtonRect()
+    local g = require("lib/bookshelf_footer_geom").rememberedButtonRect(side)
               or require("lib/bookshelf_reader_buttons").tapRect(side)
     pcall(function() StartMenu.open(nil, Screen:scaleBySize(48), g, "reader") end)
 end
