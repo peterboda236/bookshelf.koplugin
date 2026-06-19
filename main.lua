@@ -984,11 +984,13 @@ function Bookshelf:_setupReaderButtons()
     if not BookshelfSettings.read("reader_launcher_button", false) then return end
     local ok, ReaderButtons = pcall(require, "lib/bookshelf_reader_buttons")
     if not ok or not ReaderButtons then return end
-    local side = "left"
+    -- Match the home-screen hamburger's side (start_menu_position; "off" -> left).
+    local side = BookshelfSettings.read("start_menu_position", "left")
+    if side ~= "right" then side = "left" end
     self._reader_buttons = ReaderButtons:new{ side = side }
     self.ui.view:registerViewModule("bookshelf_launcher", self._reader_buttons)
     local Screen = Device.screen
-    local g = ReaderButtons.geom(side)
+    local g = ReaderButtons.tapRect(side)
     local sw, sh = Screen:getWidth(), Screen:getHeight()
     -- Touch zone over the button rect (same geom as the paint). overrides take
     -- it ahead of the page-turn / footer taps in that small corner only.
@@ -1026,7 +1028,9 @@ function Bookshelf:_openReaderStartMenu()
     local ok, StartMenu = pcall(require, "lib/bookshelf_start_menu")
     if not ok or not StartMenu then return end
     local Screen = require("device").screen
-    local g = require("lib/bookshelf_reader_buttons").geom("left")
+    local side = BookshelfSettings.read("start_menu_position", "left")
+    if side ~= "right" then side = "left" end
+    local g = require("lib/bookshelf_reader_buttons").tapRect(side)
     pcall(function() StartMenu.open(nil, Screen:scaleBySize(48), g) end)
 end
 
