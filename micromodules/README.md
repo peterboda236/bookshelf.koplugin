@@ -165,17 +165,54 @@ Set `wants_minute_tick = true` if your card shows wall-clock time (a clock): the
 hero re-renders it once a minute (scoped) so it stays current. Read the time in
 `render` as usual.
 
-## Per-instance config (optional)
+## Storing settings
 
-A module that should be addable multiple times with different settings (e.g. the
-`action` module) stores its config as extra fields ON its entry, not in the
-global `micromodule_<key>_*` store. The hero `sanitize` preserves unknown fields,
-so they round-trip. Read them from the `entry` render arg; mutate them in
-`on_tap`/`show_settings` via `ctx.entry` and persist with `ctx.save()` (saves the
-host's list and reloads this card). To configure a module interactively at add
-time, declare `on_add = function(host_ctx, done)`: gather fields and call
-`done(fields)` to merge them into the new entry, or `done(nil)` to cancel. Hosts
-that don't recognise `on_add` just insert the bare entry. See `action.lua`.
+Two kinds of settings, two APIs. **Neither writes the main `bookshelf.lua`** —
+per-instance config rides on the card's entry, and shared/module data lives in a
+separate `bookshelf_micromodules.lua` file.
+
+### Per-instance config — `ctx.config`
+
+For a module addable multiple times with **different settings each** (e.g. the
+`action` launcher, or `countdown`'s date + label). Use `ctx.config`, a handle
+over fields on this card's entry:
+
+```lua
+render = function(ctx)
+    local label = ctx.config:get("label", "Countdown")   -- read (default if unset)
+    ...
+end,
+show_settings = function(ctx)
+    ctx.config:set("label", newLabel)   -- write + persist + reload this card
+end,
+```
+
+`:get(name, default)` reads; `:set(name, value)` / `:delete(name)` write and
+persist (only in `on_tap`/`show_settings` — in `render` the config is read-only,
+so `:set` there is a no-op). Config travels with the card and is removed when the
+card is deleted — no orphans. To configure a module interactively at add time,
+declare `on_add = function(host_ctx, done)`: gather fields and call
+`done(fields)` to seed the new entry, or `done(nil)` to cancel. Hosts that don't
+recognise `on_add` just insert the bare entry. See `action.lua` and
+`countdown.lua`.
+
+(Under the hood this is the entry table + a host save; you can still read raw
+fields off `ctx.entry` if you need to, but `ctx.config` is the supported path.)
+
+### Shared / cache data — `Kit.moduleStore(key)`
+
+For data shared by **all instances** of a module (a per-type default) or a
+**fetch cache** (weather, on-this-day). Namespaced by module key, backed by the
+separate file:
+
+```lua
+local store = require("lib/bookshelf_module_kit").moduleStore("weather")
+store:set("data", fetched)          -- store:get(name, default) / :delete(name)
+```
+
+Don't reach for `lib/bookshelf_settings_store` or hand-built `micromodule_<key>_*`
+keys directly — `moduleStore` is the clean wrapper (and existing modules using
+those keys are transparently routed to the same file).
 
 ## No blocking work on render
 
@@ -225,16 +262,16 @@ contract test checks for it).
 ## `on_tap` / `show_settings`
 
 `on_tap(ctx)` and `show_settings(ctx)` receive the same `ctx` as `render`
-(above): `ctx.bw`, `ctx.menu`, `ctx.entry`, `ctx.surface`, plus `ctx.save()` to
-persist per-instance changes you make to `ctx.entry`. By default a tap closes the
-menu then runs `on_tap`. With `keep_open = true` the
+(above): `ctx.bw`, `ctx.menu`, `ctx.entry`, `ctx.surface`, plus `ctx.config` for
+per-instance settings (and `ctx.save()`, the lower-level persist it wraps). By
+default a tap closes the menu then runs `on_tap`. With `keep_open = true` the
 menu stays open: `on_tap(ctx)` runs, then the card reloads **automatically** — do
 NOT call `ctx.menu:_reload()` yourself inside `on_tap`. `keep_open` may be a
 `function(ctx) -> bool` evaluated at tap time. `show_settings(ctx)` adds a
-"Module settings…" row to the long-press dialog; store settings via
-`require("lib/bookshelf_settings_store")` under `micromodule_<key>_*` keys (see
-`clock.lua`). The loader exports `menu_generation`, a counter bumped once per
-menu open that modules may key per-open caches on.
+"Module settings…" row to the long-press dialog; persist per-instance settings
+via `ctx.config` and shared/per-type settings via `Kit.moduleStore` (see
+**Storing settings** above). The loader exports `menu_generation`, a counter
+bumped once per menu open that modules may key per-open caches on.
 
 On physical-button (D-pad) devices the host draws the focus ring and handles
 grid navigation; the same `on_tap` fires when the focused card is activated with

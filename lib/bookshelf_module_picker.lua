@@ -120,6 +120,7 @@ function ModulePicker._renderCell(item, dimen)
             width = preview_w, height = grey_h, scale = scale_pct,
             preview = true, refresh = nil, shape = "square", entry = nil,
             surface = "picker", bw = nil, menu = nil,
+            config = require("lib/bookshelf_module_kit").entryConfig(nil, nil),
         })
         preview = ok and widget or nil
         if not ok then

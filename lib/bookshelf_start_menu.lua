@@ -486,6 +486,7 @@ function StartMenu:_buildModuleRow(entry, w, focused, in_flyout)
                 scale = self._scale_pct or 100,
                 preview = false, refresh = refresh, shape = nil, entry = entry,
                 surface = "start_menu", bw = self.bw, menu = self,
+                config = require("lib/bookshelf_module_kit").entryConfig(entry, nil),
             })
             if wgt then wgt:getSize() end
             return wgt
@@ -1139,6 +1140,7 @@ function StartMenu:_activate(entry, tap_rect)
             Model.save(items)
             menu:_reload()
         end
+        ctx.config = require("lib/bookshelf_module_kit").entryConfig(entry, ctx.save)
         -- keep_open may be a boolean or a function(ctx) -> bool resolved at
         -- tap time (e.g. quote_of_day keeps the menu only for its "New
         -- quote" tap action). pcall: a broken module must not wedge the

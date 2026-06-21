@@ -146,6 +146,7 @@ function HeroModules._ctx(bw, refresh, entry)
         HeroModel.save(items)
         reload()
     end
+    ctx.config = require("lib/bookshelf_module_kit").entryConfig(entry, ctx.save)
     return ctx
 end
 
@@ -205,15 +206,19 @@ local function _renderFitted(def, inner_w, inner_h, base_scale, refresh, entry, 
     local floor    = 60
     local grow_cap = 220
 
-    -- Aspect hint (6th render arg): "wide"/"tall"/"square" so a module can
-    -- choose a LAYOUT, not just a font size. Optional — modules ignore it.
-    local shape = require("lib/bookshelf_module_kit").shape(inner_w, inner_h)
+    -- Aspect hint (ctx.shape): "wide"/"tall"/"square" so a module can choose a
+    -- LAYOUT, not just a font size. Optional — modules ignore it.
+    local Kit   = require("lib/bookshelf_module_kit")
+    local shape = Kit.shape(inner_w, inner_h)
+    -- Per-instance config handle (read-only in render: no save passed). Built
+    -- once, outside the grow/shrink loop.
+    local cfg   = Kit.entryConfig(entry, nil)
 
     local function renderAt(s)
         local ctx = {
             width = inner_w, height = inner_h, scale = s, preview = false,
             refresh = refresh, shape = shape, entry = entry,
-            surface = _build_surface, bw = bw, menu = nil,
+            surface = _build_surface, bw = bw, menu = nil, config = cfg,
         }
         local ok, widget = pcall(def.render, ctx)
         if not ok or not widget then return nil end
