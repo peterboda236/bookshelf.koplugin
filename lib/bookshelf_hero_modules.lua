@@ -411,15 +411,19 @@ function HeroModules._makeCell(bw, entry, cell_w, cell_h, scale_pct, focusable, 
         -- vertical slack, and widen the L/R inset to match it so all four gaps
         -- are equal; then re-render the content at that narrower width (its
         -- width feeds the module's own layout, so it must actually re-run).
-        -- Capped at 20% of the cell per side so a very tall cell can't narrow
-        -- content enough to trip a module's width-based reflow (e.g. shelf_size
-        -- wrapping to 2 columns). Only re-renders when there's real slack to
-        -- reclaim, so height-filling modules pay nothing.
+        -- Capped at 8% of the cell per side (content stays >= ~84% width).
+        -- A bigger cap balances the padding better on tall cells, but narrowing
+        -- content too far truncates a module's long lines -- _renderFitted scales
+        -- a short module UP to fill a tall cell, so headings/labels get wide, and
+        -- the narrower we make the cell the sooner they ellipsis (e.g. the
+        -- reading-streak "Reading streak" / "Best: ..." lines). 8% trades a little
+        -- padding balance for no truncation. Only re-renders when there's real
+        -- slack to reclaim, so height-filling modules pay nothing.
         if content and not is_sq then
             local ok_h, ch = pcall(function() return content:getSize().h end)
             if ok_h and type(ch) == "number" then
                 local v_slack   = math.floor((inner_h - ch) / 2)
-                local max_inset = math.floor(inner_w * 0.20)
+                local max_inset = math.floor(inner_w * 0.08)
                 local inset     = math.max(base_inset, math.min(v_slack, max_inset))
                 local target_w  = math.max(50, inner_w - 2 * inset)
                 if target_w < text_w - Screen:scaleBySize(2) then
