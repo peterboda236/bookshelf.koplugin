@@ -276,14 +276,19 @@ local function buildCard(Kit, mw, scale_pct, shape, s)
     if shape == "wide" then
         local HorizontalGroup = require("ui/widget/horizontalgroup")
         local HorizontalSpan  = require("ui/widget/horizontalspan")
-        local gap  = Kit.sc(scale_pct)(12)
+        -- Two columns sharing the cell width. The current-streak heading is
+        -- "Streak" (not "Reading streak", which is too long for half the cell
+        -- and truncated to an ellipsis) -- short enough to keep "streak" in the
+        -- label so the pairing with "Best streak" reads as current-vs-best.
+        -- Slightly wider inter-column gap for breathing room.
+        local gap  = Kit.sc(scale_pct)(20)
         local half = math.floor((mw - gap) / 2)
         return HorizontalGroup:new{
             align = "top",
             Kit.valueCard{
                 width     = half,
                 scale_pct = scale_pct,
-                heading   = _("Reading streak"),
+                heading   = _("Streak"),
                 value     = tostring(s.current),
                 suffix    = " " .. (s.current == 1 and _("day") or _("days")),
                 sub       = weekText(s.current_weeks),
