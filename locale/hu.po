@@ -826,7 +826,7 @@ msgstr "Magasság: "
 
 #: lib/bookshelf_hero_line_editor.lua:428
 msgid "Tokens…"
-msgstr "Jelölők…"
+msgstr "Tokenek…"
 
 #: lib/bookshelf_hero_line_editor.lua:438
 msgid "Icons…"
@@ -1745,6 +1745,9 @@ msgid ""
 "opens a full-screen grid. Off: removes micro-modules everywhere. Your module "
 "configuration is kept."
 msgstr ""
+"Hol jelenjen meg a mikromodul-rács. Főterületen: egy chip felváltja a főkártyát a ráccsal. "
+"Teljes képernyős gomb: a lábléc sarkában lévő rácsgomb teljes képernyős rácsot nyit. " 
+"Ki: eltávolítja a mikromodulokat mindenhonnan. A modulkonfiguráció megmarad."
 
 #: lib/bookshelf_settings.lua:1441
 msgid "Currently reading"
@@ -1816,13 +1819,15 @@ msgstr ""
 
 #: lib/bookshelf_settings.lua:1589
 msgid "Show launcher button while reading"
-msgstr ""
+msgstr "Indítógomb megjelenítése olvasás közben"
 
 #: lib/bookshelf_settings.lua:1590
 msgid ""
 "Adds a small Bookshelf button to the bottom corner of the reader that opens "
 "the start menu. Takes effect the next time you open a book."
 msgstr ""
+"Egy kis Bookshelf gombot jelenít meg az olvasó alsó sarkában, "
+"amely megnyitja a kezdőmenüt. A következő könyv megnyitásakor lép érvénybe."
 
 #: lib/bookshelf_settings.lua:1608
 msgid "Advanced settings"
@@ -3557,16 +3562,16 @@ msgstr "24 órás"
 
 #: micromodules/countdown.lua:56
 msgid "Countdown label"
-msgstr ""
+msgstr "Visszaszámlálás felirata"
 
 #: micromodules/countdown.lua:58
 msgid "e.g. Holiday"
-msgstr ""
+msgstr "pl. Nyaralás"
 
 #: micromodules/countdown.lua:66 micromodules/countdown.lua:76
 #: micromodules/countdown.lua:83 micromodules/countdown.lua:132
 msgid "Countdown"
-msgstr ""
+msgstr "Visszaszámlálás"
 
 #: micromodules/countdown.lua:88 micromodules/countdown.lua:105
 #: micromodules/reading_streak.lua:264 micromodules/reading_streak.lua:273
@@ -3576,7 +3581,7 @@ msgstr "nap"
 
 #: micromodules/countdown.lua:88
 msgid "until …"
-msgstr ""
+msgstr "eddig: …"
 
 #: micromodules/countdown.lua:105 micromodules/reading_streak.lua:264
 #: micromodules/reading_streak.lua:273 micromodules/reading_streak.lua:284
@@ -3585,15 +3590,15 @@ msgstr "nap"
 
 #: micromodules/countdown.lua:107
 msgid "until %1"
-msgstr ""
+msgstr "eddig: %1"
 
 #: micromodules/countdown.lua:108
 msgid "since %1"
-msgstr ""
+msgstr "%1 óta"
 
 #: micromodules/countdown.lua:115
 msgid "Next"
-msgstr ""
+msgstr "Tovább"
 
 #: micromodules/daily_fun.lua:157
 msgid "Failed. Retry →"
