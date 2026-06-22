@@ -177,13 +177,19 @@ function Edit.show(menu, entry)
         if def and type(def.show_settings) == "function" then
             rows[#rows + 1] = {
                 { text = _("Module settings\xE2\x80\xA6"), callback = close(function()
-                    local ctx = { bw = menu.bw, menu = menu, entry = entry }
+                    local ctx = { bw = menu.bw, menu = menu, entry = entry,
+                                  surface = "start_menu" }
                     function ctx.save()
                         mutate(menu, function(items)
                             local list, i = Model.findById(items, entry.id)
                             if list and i then list[i] = entry end
                         end)
                     end
+                    -- Per-instance config handle, like the hero / tap ctx. Without
+                    -- it a per-instance module (Countdown: its date + label live on
+                    -- the entry via ctx.config) bails and its settings won't open
+                    -- from the start-menu edit dialog.
+                    ctx.config = require("lib/bookshelf_module_kit").entryConfig(entry, ctx.save)
                     local ok, err = pcall(def.show_settings, ctx)
                     if not ok then
                         require("logger").warn(
